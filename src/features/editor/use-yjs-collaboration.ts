@@ -79,6 +79,7 @@ export function useYjsCollaboration(roomId: string) {
   const [localUser, setLocalUser] = useState<RemoteUser>(getOrCreateLocalUser);
   const [activeUsers, setActiveUsers] = useState<RemoteUser[]>([]);
   const [fileNames, setFileNames] = useState<string[]>([]);
+  const [filesVersion, setFilesVersion] = useState(0);
   const [activeFileName, setActiveFileName] = useState<string>("main.js");
   const [isOffline, setIsOffline] = useState(false);
   const [isSynced, setIsSynced] = useState(false);
@@ -92,7 +93,7 @@ export function useYjsCollaboration(roomId: string) {
   const ydocRef = useRef<Y.Doc | null>(null);
   const wsProviderRef = useRef<WebsocketProvider | null>(null);
   const persistenceRef = useRef<IndexeddbPersistence | null>(null);
-  const undoManagersRef = useRef<Map<string, Y.UndoManager>>(new Map());
+  const undoManagersRef = useRef<WeakMap<Y.Text, Y.UndoManager>>(new WeakMap());
 
   // Initialize or re-initialize Yjs instance on roomId change
   useEffect(() => {
@@ -125,6 +126,7 @@ export function useYjsCollaboration(roomId: string) {
     const updateFilesList = () => {
       const keys = Array.from(filesMap.keys());
       setFileNames(keys);
+      setFilesVersion((v) => v + 1);
       setActiveFileName((current) => {
         if (keys.length === 0) return "";
         if (keys.includes(current)) return current;
@@ -145,7 +147,6 @@ export function useYjsCollaboration(roomId: string) {
           });
         }
       });
-      // Deduplicate by user id
       const unique = Array.from(new Map(users.map((u) => [u.id, u])).values());
       setActiveUsers(unique);
     };
@@ -178,7 +179,7 @@ export function useYjsCollaboration(roomId: string) {
     approvedUsersMap.observe(updateApprovedUsers);
     wsProvider.awareness.on("change", updateActiveUsers);
 
-    // Seed files once loaded if empty
+    // Seed files ONLY after remote sync completes (or offline fallback)
     const checkAndSeed = () => {
       if (filesMap.size === 0) {
         ydoc.transact(() => {
@@ -191,9 +192,7 @@ export function useYjsCollaboration(roomId: string) {
         updateFilesList();
       }
 
-      // Check room host
       if (!roomMeta.get("hostId")) {
-        // First user to enter becomes host and auto-approves themselves
         ydoc.transact(() => {
           roomMeta.set("hostId", currentUser.id);
           roomMeta.set("hostName", currentUser.name);
@@ -206,17 +205,21 @@ export function useYjsCollaboration(roomId: string) {
       }
     };
 
+    let wsHasSynced = false;
+
+    // Load cached IndexedDB state without prematurely seeding
     persistence.whenSynced.then(() => {
-      setIsSynced(true);
-      checkAndSeed();
       updateFilesList();
       updateRoomMeta();
       updateJoinRequests();
       updateApprovedUsers();
     });
 
+    // Wait for WebSocket server sync before deciding whether to seed
     const onWsSync = (synced: boolean) => {
       if (synced) {
+        wsHasSynced = true;
+        setIsSynced(true);
         checkAndSeed();
         updateFilesList();
         updateRoomMeta();
@@ -226,12 +229,21 @@ export function useYjsCollaboration(roomId: string) {
     };
     wsProvider.on("sync", onWsSync);
 
+    // Offline fallback: if WS cannot connect within 3s, seed locally if empty
+    const offlineFallbackTimer = window.setTimeout(() => {
+      if (!wsHasSynced) {
+        setIsSynced(true);
+        checkAndSeed();
+      }
+    }, 3000);
+
     const onStatus = ({ status }: { status: string }) => {
       setIsOffline(status === "disconnected");
     };
     wsProvider.on("status", onStatus);
 
     return () => {
+      window.clearTimeout(offlineFallbackTimer);
       wsProvider.off("sync", onWsSync);
       wsProvider.off("status", onStatus);
       wsProvider.awareness.off("change", updateActiveUsers);
@@ -240,40 +252,31 @@ export function useYjsCollaboration(roomId: string) {
       joinRequestsMap.unobserve(updateJoinRequests);
       approvedUsersMap.unobserve(updateApprovedUsers);
 
-      // Clean up undo managers
-      undoManagersRef.current.forEach((um) => um.destroy());
-      undoManagersRef.current.clear();
-
       wsProvider.destroy();
       persistence.destroy();
       ydoc.destroy();
     };
   }, [roomId]);
 
-  // Current active Y.Text
+  // Always read the live Y.Text from filesMap (never mutate inside useMemo)
   const activeYText = useMemo(() => {
     if (!ydocRef.current || !activeFileName) return null;
     const filesMap = ydocRef.current.getMap<Y.Text>("files");
-    let yText = filesMap.get(activeFileName);
-    if (!yText && activeFileName) {
-      yText = new Y.Text("");
-      filesMap.set(activeFileName, yText);
-    }
-    return yText ?? null;
-  }, [activeFileName, fileNames]);
+    return filesMap.get(activeFileName) ?? null;
+  }, [activeFileName, filesVersion]);
 
-  // Get or create UndoManager for active file
+  // Get or create UndoManager keyed by the exact Y.Text instance
   const activeUndoManager = useMemo(() => {
     if (!activeYText) return null;
-    let um = undoManagersRef.current.get(activeFileName);
+    let um = undoManagersRef.current.get(activeYText);
     if (!um) {
       um = new Y.UndoManager(activeYText, {
         trackedOrigins: new Set([null]),
       });
-      undoManagersRef.current.set(activeFileName, um);
+      undoManagersRef.current.set(activeYText, um);
     }
     return um;
-  }, [activeYText, activeFileName]);
+  }, [activeYText]);
 
   // Track canUndo / canRedo for active UndoManager
   useEffect(() => {
@@ -326,13 +329,6 @@ export function useYjsCollaboration(roomId: string) {
       filesMap.set(trimmed, new Y.Text(content));
     });
 
-    // Cleanup old undo manager
-    const oldUm = undoManagersRef.current.get(oldName);
-    if (oldUm) {
-      oldUm.destroy();
-      undoManagersRef.current.delete(oldName);
-    }
-
     setActiveFileName((current) => (current === oldName ? trimmed : current));
     return true;
   }, []);
@@ -344,12 +340,6 @@ export function useYjsCollaboration(roomId: string) {
       filesMap.delete(name);
     });
 
-    const um = undoManagersRef.current.get(name);
-    if (um) {
-      um.destroy();
-      undoManagersRef.current.delete(name);
-    }
-
     setActiveFileName((current) => {
       if (current === name) {
         const remaining = Array.from(filesMap.keys()).filter((k) => k !== name);
@@ -359,23 +349,26 @@ export function useYjsCollaboration(roomId: string) {
     });
   }, []);
 
-  const importFiles = useCallback((files: { name: string; content: string }[]) => {
-    if (!ydocRef.current || files.length === 0) return 0;
-    const filesMap = ydocRef.current.getMap<Y.Text>("files");
-    let count = 0;
-    ydocRef.current.transact(() => {
-      for (const file of files) {
-        if (!filesMap.has(file.name)) {
-          filesMap.set(file.name, new Y.Text(file.content));
-          count++;
+  const importFiles = useCallback(
+    (files: { name: string; content: string }[]) => {
+      if (!ydocRef.current || files.length === 0) return 0;
+      const filesMap = ydocRef.current.getMap<Y.Text>("files");
+      let count = 0;
+      ydocRef.current.transact(() => {
+        for (const file of files) {
+          if (!filesMap.has(file.name)) {
+            filesMap.set(file.name, new Y.Text(file.content));
+            count++;
+          }
         }
+      });
+      if (files[0] && !filesMap.has(activeFileName)) {
+        setActiveFileName(files[0].name);
       }
-    });
-    if (files[0] && !filesMap.has(activeFileName)) {
-      setActiveFileName(files[0].name);
-    }
-    return count;
-  }, [activeFileName]);
+      return count;
+    },
+    [activeFileName]
+  );
 
   const toggleOffline = useCallback(() => {
     const ws = wsProviderRef.current;
@@ -412,24 +405,27 @@ export function useYjsCollaboration(roomId: string) {
   const isApproved = Boolean(isHost || approvedUsers[localUser.id]);
   const hasRequestedJoin = Boolean(joinRequests.some((r) => r.id === localUser.id));
 
-  const requestJoin = useCallback((customName?: string) => {
-    if (!ydocRef.current) return;
-    const name = customName?.trim() || localUser.name;
-    const updatedUser = { ...localUser, name };
-    setLocalUser(updatedUser);
-    window.sessionStorage.setItem("syncforge_user_name", name);
+  const requestJoin = useCallback(
+    (customName?: string) => {
+      if (!ydocRef.current) return;
+      const name = customName?.trim() || localUser.name;
+      const updatedUser = { ...localUser, name };
+      setLocalUser(updatedUser);
+      window.sessionStorage.setItem("syncforge_user_name", name);
 
-    if (wsProviderRef.current) {
-      wsProviderRef.current.awareness.setLocalStateField("user", updatedUser);
-    }
+      if (wsProviderRef.current) {
+        wsProviderRef.current.awareness.setLocalStateField("user", updatedUser);
+      }
 
-    const joinRequestsMap = ydocRef.current.getMap<JoinRequest>("joinRequests");
-    joinRequestsMap.set(localUser.id, {
-      id: localUser.id,
-      name,
-      timestamp: Date.now(),
-    });
-  }, [localUser]);
+      const joinRequestsMap = ydocRef.current.getMap<JoinRequest>("joinRequests");
+      joinRequestsMap.set(localUser.id, {
+        id: localUser.id,
+        name,
+        timestamp: Date.now(),
+      });
+    },
+    [localUser]
+  );
 
   const acceptJoinRequest = useCallback((userId: string) => {
     if (!ydocRef.current) return;
