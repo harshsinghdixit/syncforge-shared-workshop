@@ -28,3 +28,7 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Application structure
+
+- Keep editor document operations and history in the editor model, with browser persistence isolated in its state hook; UI sections consume that state so realtime syncing can replace persistence later.
