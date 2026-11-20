@@ -509,3 +509,38 @@
   .clear-cache-button { width: 30px; padding: 0; }
   .clear-cache-button span { display: none; }
 }
+
+/* CodeMirror 6 Collaborative Dark Theme adjustments */
+.cm-editor {
+  height: 100%;
+  outline: none !important;
+}
+.cm-scroller {
+  overflow: auto;
+  height: 100%;
+}
+.cm-ySelection {
+  transition: opacity 0.2s ease-in-out;
+}
+.cm-ySelectionCaret {
+  position: relative;
+  border-left: 2px solid;
+  border-right: 0;
+  margin-left: -1px;
+  box-sizing: border-box;
+  display: inline;
+}
+.cm-ySelectionInfo {
+  position: absolute;
+  top: -1.3em;
+  left: -1px;
+  font-size: 10px;
+  font-family: var(--font-code);
+  font-weight: 600;
+  color: white;
+  padding: 1px 4px;
+  border-radius: 2px;
+  z-index: 50;
+  white-space: nowrap;
+  pointer-events: none;
+}
