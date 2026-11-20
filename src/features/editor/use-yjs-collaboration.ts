@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { IndexeddbPersistence } from "y-indexeddb";
+import { toast } from "sonner";
 
 export interface RemoteUser {
   id: string;
@@ -35,19 +36,36 @@ const USER_COLORS = [
 const ADJECTIVES = ["Swift", "Cosmic", "Neon", "Silent", "Quantum", "Hyper", "Solar", "Vivid"];
 const NOUNS = ["Coder", "Forge", "Hacker", "Pioneer", "Voyager", "Architect", "Dev", "Spark"];
 
+function persistLocalUser(user: RemoteUser) {
+  window.localStorage.setItem("syncforge_user_id", user.id);
+  window.localStorage.setItem("syncforge_user_name", user.name);
+  window.localStorage.setItem("syncforge_user_color", user.color);
+  window.localStorage.setItem("syncforge_user_color_light", user.colorLight);
+}
+
 export function getOrCreateLocalUser(): RemoteUser {
-  const storedId = window.sessionStorage.getItem("syncforge_user_id");
-  const storedName = window.sessionStorage.getItem("syncforge_user_name");
-  const storedColor = window.sessionStorage.getItem("syncforge_user_color");
-  const storedColorLight = window.sessionStorage.getItem("syncforge_user_color_light");
+  const storedId =
+    window.localStorage.getItem("syncforge_user_id") ??
+    window.sessionStorage.getItem("syncforge_user_id");
+  const storedName =
+    window.localStorage.getItem("syncforge_user_name") ??
+    window.sessionStorage.getItem("syncforge_user_name");
+  const storedColor =
+    window.localStorage.getItem("syncforge_user_color") ??
+    window.sessionStorage.getItem("syncforge_user_color");
+  const storedColorLight =
+    window.localStorage.getItem("syncforge_user_color_light") ??
+    window.sessionStorage.getItem("syncforge_user_color_light");
 
   if (storedId && storedName && storedColor && storedColorLight) {
-    return {
+    const user = {
       id: storedId,
       name: storedName,
       color: storedColor,
       colorLight: storedColorLight,
     };
+    persistLocalUser(user);
+    return user;
   }
 
   const id = `user-${Math.random().toString(36).substring(2, 9)}`;
@@ -56,17 +74,15 @@ export function getOrCreateLocalUser(): RemoteUser {
   const name = `${adj} ${noun}`;
   const colorObj = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
 
-  window.sessionStorage.setItem("syncforge_user_id", id);
-  window.sessionStorage.setItem("syncforge_user_name", name);
-  window.sessionStorage.setItem("syncforge_user_color", colorObj.color);
-  window.sessionStorage.setItem("syncforge_user_color_light", colorObj.colorLight);
-
-  return {
+  const user = {
     id,
     name,
     color: colorObj.color,
     colorLight: colorObj.colorLight,
   };
+  persistLocalUser(user);
+
+  return user;
 }
 
 export const STARTER_FILES: Record<string, string> = {
@@ -83,26 +99,44 @@ export function useYjsCollaboration(roomId: string) {
   const [activeFileName, setActiveFileName] = useState<string>("main.js");
   const [isOffline, setIsOffline] = useState(false);
   const [isSynced, setIsSynced] = useState(false);
-  const [hostId, setHostId] = useState<string | null>(null);
+
+  const isCreatorInitial = typeof window !== "undefined" && (
+    sessionStorage.getItem(`syncforge_creator_${roomId}`) === "true" ||
+    sessionStorage.getItem(`syncforge_host_room_${roomId}`) === getOrCreateLocalUser().id
+  );
+
+  const [hostId, setHostId] = useState<string | null>(() => isCreatorInitial ? getOrCreateLocalUser().id : null);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
-  const [approvedUsers, setApprovedUsers] = useState<Record<string, ApprovedUser>>({});
+  const [approvedUsers, setApprovedUsers] = useState<Record<string, ApprovedUser>>(() => {
+    if (isCreatorInitial) {
+      const u = getOrCreateLocalUser();
+      return { [u.id]: { id: u.id, name: u.name, approvedAt: Date.now() } };
+    }
+    return {};
+  });
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+
+  const prevUsersRef = useRef<Map<string, string>>(new Map());
 
   // References to keep persistent Yjs instances
   const ydocRef = useRef<Y.Doc | null>(null);
   const wsProviderRef = useRef<WebsocketProvider | null>(null);
   const persistenceRef = useRef<IndexeddbPersistence | null>(null);
   const undoManagersRef = useRef<WeakMap<Y.Text, Y.UndoManager>>(new WeakMap());
+  const [ydoc, setYdoc] = useState<Y.Doc | null>(null);
+  const [wsProvider, setWsProvider] = useState<WebsocketProvider | null>(null);
 
   // Initialize or re-initialize Yjs instance on roomId change
   useEffect(() => {
     const ydoc = new Y.Doc();
     ydocRef.current = ydoc;
+    setYdoc(ydoc);
 
     const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:1234";
     const wsProvider = new WebsocketProvider(wsUrl, roomId, ydoc, { connect: true });
     wsProviderRef.current = wsProvider;
+    setWsProvider(wsProvider);
 
     const persistence = new IndexeddbPersistence(roomId, ydoc);
     persistenceRef.current = persistence;
@@ -122,6 +156,35 @@ export function useYjsCollaboration(roomId: string) {
     const roomMeta = ydoc.getMap<string>("roomMeta");
     const joinRequestsMap = ydoc.getMap<JoinRequest>("joinRequests");
     const approvedUsersMap = ydoc.getMap<ApprovedUser>("approvedUsers");
+
+    const isCreatorSession = typeof window !== "undefined" && (
+      sessionStorage.getItem(`syncforge_creator_${roomId}`) === "true" ||
+      sessionStorage.getItem(`syncforge_host_room_${roomId}`) === currentUser.id
+    );
+
+    // If client is creator, immediately ensure host status and approval in the maps
+    if (isCreatorSession) {
+      ydoc.transact(() => {
+        if (!roomMeta.get("hostId")) {
+          roomMeta.set("hostId", currentUser.id);
+          roomMeta.set("hostName", currentUser.name);
+        }
+        approvedUsersMap.set(currentUser.id, {
+          id: currentUser.id,
+          name: currentUser.name,
+          approvedAt: Date.now(),
+        });
+      });
+      setHostId(currentUser.id);
+      setApprovedUsers((prev) => ({
+        ...prev,
+        [currentUser.id]: {
+          id: currentUser.id,
+          name: currentUser.name,
+          approvedAt: Date.now(),
+        },
+      }));
+    }
 
     const updateFilesList = () => {
       const keys = Array.from(filesMap.keys());
@@ -149,10 +212,33 @@ export function useYjsCollaboration(roomId: string) {
       });
       const unique = Array.from(new Map(users.map((u) => [u.id, u])).values());
       setActiveUsers(unique);
+
+      // Subtle join/leave notifications
+      const prevMap = prevUsersRef.current;
+      const currentMap = new Map<string, string>();
+      unique.forEach((u) => currentMap.set(u.id, u.name));
+
+      if (prevMap.size > 0) {
+        unique.forEach((u) => {
+          if (u.id !== currentUser.id && !prevMap.has(u.id)) {
+            toast.info(`${u.name} joined the room`, {
+              duration: 3000,
+            });
+          }
+        });
+        prevMap.forEach((name, id) => {
+          if (id !== currentUser.id && !currentMap.has(id)) {
+            toast(`${name} left the room`, {
+              duration: 2500,
+            });
+          }
+        });
+      }
+      prevUsersRef.current = currentMap;
     };
 
     const updateRoomMeta = () => {
-      const host = roomMeta.get("hostId") ?? null;
+      const host = roomMeta.get("hostId") ?? (isCreatorSession ? currentUser.id : null);
       setHostId(host);
     };
 
@@ -169,6 +255,13 @@ export function useYjsCollaboration(roomId: string) {
       approvedUsersMap.forEach((val, key) => {
         if (val) map[key] = val;
       });
+      if (isCreatorSession && !map[currentUser.id]) {
+        map[currentUser.id] = {
+          id: currentUser.id,
+          name: currentUser.name,
+          approvedAt: Date.now(),
+        };
+      }
       setApprovedUsers(map);
     };
 
@@ -192,10 +285,12 @@ export function useYjsCollaboration(roomId: string) {
         updateFilesList();
       }
 
-      if (!roomMeta.get("hostId")) {
+      if (isCreatorSession || !roomMeta.get("hostId")) {
         ydoc.transact(() => {
-          roomMeta.set("hostId", currentUser.id);
-          roomMeta.set("hostName", currentUser.name);
+          if (!roomMeta.get("hostId")) {
+            roomMeta.set("hostId", currentUser.id);
+            roomMeta.set("hostName", currentUser.name);
+          }
           approvedUsersMap.set(currentUser.id, {
             id: currentUser.id,
             name: currentUser.name,
@@ -229,13 +324,13 @@ export function useYjsCollaboration(roomId: string) {
     };
     wsProvider.on("sync", onWsSync);
 
-    // Offline fallback: if WS cannot connect within 3s, seed locally if empty
+    // Offline fallback: seed locally only if the socket never connected
     const offlineFallbackTimer = window.setTimeout(() => {
-      if (!wsHasSynced) {
+      if (!wsHasSynced && !wsProvider.wsconnected) {
         setIsSynced(true);
         checkAndSeed();
       }
-    }, 3000);
+    }, 4000);
 
     const onStatus = ({ status }: { status: string }) => {
       setIsOffline(status === "disconnected");
@@ -252,6 +347,8 @@ export function useYjsCollaboration(roomId: string) {
       joinRequestsMap.unobserve(updateJoinRequests);
       approvedUsersMap.unobserve(updateApprovedUsers);
 
+      setWsProvider((current) => (current === wsProvider ? null : current));
+      setYdoc((current) => (current === ydoc ? null : current));
       wsProvider.destroy();
       persistence.destroy();
       ydoc.destroy();
@@ -260,19 +357,17 @@ export function useYjsCollaboration(roomId: string) {
 
   // Always read the live Y.Text from filesMap (never mutate inside useMemo)
   const activeYText = useMemo(() => {
-    if (!ydocRef.current || !activeFileName) return null;
-    const filesMap = ydocRef.current.getMap<Y.Text>("files");
+    if (!ydoc || !activeFileName) return null;
+    const filesMap = ydoc.getMap<Y.Text>("files");
     return filesMap.get(activeFileName) ?? null;
-  }, [activeFileName, filesVersion]);
+  }, [ydoc, activeFileName, filesVersion]);
 
   // Get or create UndoManager keyed by the exact Y.Text instance
   const activeUndoManager = useMemo(() => {
     if (!activeYText) return null;
     let um = undoManagersRef.current.get(activeYText);
     if (!um) {
-      um = new Y.UndoManager(activeYText, {
-        trackedOrigins: new Set([null]),
-      });
+      um = new Y.UndoManager(activeYText);
       undoManagersRef.current.set(activeYText, um);
     }
     return um;
@@ -401,7 +496,11 @@ export function useYjsCollaboration(roomId: string) {
   }, [activeUndoManager]);
 
   // Host Approval Waiting Room Actions
-  const isHost = Boolean(hostId && hostId === localUser.id);
+  const isCreator = typeof window !== "undefined" && (
+    sessionStorage.getItem(`syncforge_creator_${roomId}`) === "true" ||
+    sessionStorage.getItem(`syncforge_host_room_${roomId}`) === localUser.id
+  );
+  const isHost = Boolean((hostId && hostId === localUser.id) || isCreator);
   const isApproved = Boolean(isHost || approvedUsers[localUser.id]);
   const hasRequestedJoin = Boolean(joinRequests.some((r) => r.id === localUser.id));
 
@@ -411,7 +510,7 @@ export function useYjsCollaboration(roomId: string) {
       const name = customName?.trim() || localUser.name;
       const updatedUser = { ...localUser, name };
       setLocalUser(updatedUser);
-      window.sessionStorage.setItem("syncforge_user_name", name);
+      persistLocalUser(updatedUser);
 
       if (wsProviderRef.current) {
         wsProviderRef.current.awareness.setLocalStateField("user", updatedUser);
@@ -471,10 +570,11 @@ export function useYjsCollaboration(roomId: string) {
     renameFile,
     deleteFile,
     importFiles,
-    ydoc: ydocRef.current,
-    wsProvider: wsProviderRef.current,
+    ydoc,
+    wsProvider,
     // Waiting room
     isHost,
+    hostId,
     isApproved,
     hasRequestedJoin,
     joinRequests,

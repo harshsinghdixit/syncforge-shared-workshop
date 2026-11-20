@@ -5,13 +5,15 @@ import {
   ChevronDown,
   Circle,
   Code2,
+  Copy,
+  FileCode,
   FilePlus2,
   FileText,
   FolderOpen,
   FolderUp,
   Github,
   Layers3,
-  MoreHorizontal,
+  LogOut,
   Redo2,
   RotateCcw,
   Share2,
@@ -24,15 +26,112 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 import { useYjsCollaboration, type RemoteUser } from "./use-yjs-collaboration";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { GitHubModal } from "./github-modal";
 import { WaitingRoomModal, HostRequestBanner } from "./waiting-room";
+import { LobbyScreen } from "./lobby-screen";
 
 function FileGlyph({ name }: { name: string }) {
   if (name.endsWith(".md")) return <FileText aria-hidden="true" className="size-4" />;
   return <Code2 aria-hidden="true" className="size-4" />;
+}
+
+function InviteFriendsPopover({ roomId }: { roomId: string }) {
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(roomId);
+      setCopiedCode(true);
+      window.setTimeout(() => setCopiedCode(false), 2000);
+    } catch {}
+  };
+
+  const copyLink = async () => {
+    try {
+      const inviteUrl = new URL(window.location.href);
+      inviteUrl.searchParams.set("room", roomId);
+      await navigator.clipboard.writeText(inviteUrl.toString());
+      setCopiedLink(true);
+      window.setTimeout(() => setCopiedLink(false), 2000);
+    } catch {}
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="invite-button h-8 gap-2 border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary font-semibold shadow-sm"
+        >
+          <Share2 className="size-3.5" />
+          <span>Invite Friends</span>
+          <span className="font-mono text-[11px] bg-background/80 px-1.5 py-0.5 rounded border border-primary/30 text-foreground">
+            {roomId}
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-4 bg-card border-border shadow-2xl rounded-xl space-y-4" align="center">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Share2 className="size-4 text-primary" />
+            <h4 className="font-bold text-sm text-foreground">Invite to Room</h4>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Share this room code or direct invite link with your collaborators to code together live.
+          </p>
+        </div>
+
+        {/* Room Code */}
+        <div className="space-y-1.5 bg-background/60 p-3 rounded-lg border border-border">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-muted-foreground">ROOM CODE</span>
+            <span className="font-mono font-bold text-primary tracking-widest text-sm">{roomId}</span>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="w-full gap-2 text-xs font-semibold h-8"
+            onClick={copyCode}
+          >
+            {copiedCode ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
+            <span>{copiedCode ? "Copied Code!" : "Copy Code"}</span>
+          </Button>
+        </div>
+
+        {/* Invite Link */}
+        <div className="space-y-1.5 bg-background/60 p-3 rounded-lg border border-border">
+          <span className="text-xs font-semibold text-muted-foreground block">INVITE LINK</span>
+          <div className="text-[11px] font-mono text-muted-foreground truncate select-all bg-card/60 p-1.5 rounded border border-border/80">
+            {typeof window !== "undefined" ? `${window.location.origin}/?room=${roomId}` : `/?room=${roomId}`}
+          </div>
+          <Button
+            size="sm"
+            className="w-full gap-2 text-xs font-semibold h-8 bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={copyLink}
+          >
+            {copiedLink ? <Check className="size-3.5 text-emerald-300" /> : <Share2 className="size-3.5" />}
+            <span>{copiedLink ? "Copied Invite Link!" : "Copy Invite Link"}</span>
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function TopBar({
@@ -42,7 +141,9 @@ function TopBar({
   toggleOffline,
   activeUsers,
   localUser,
+  hostId,
   onOpenGitHub,
+  onLeaveRoom,
 }: {
   roomId: string;
   setRoomId: (roomId: string) => void;
@@ -50,37 +151,29 @@ function TopBar({
   toggleOffline: () => void;
   activeUsers: RemoteUser[];
   localUser: RemoteUser;
+  hostId: string | null;
   onOpenGitHub: () => void;
+  onLeaveRoom: () => void;
 }) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-
-  const copyInviteLink = async () => {
-    const inviteUrl = new URL(window.location.href);
-    inviteUrl.searchParams.set("room", roomId);
-    try {
-      await window.navigator.clipboard.writeText(inviteUrl.toString());
-      setCopyState("copied");
-      window.setTimeout(() => setCopyState("idle"), 1800);
-    } catch {
-      setCopyState("failed");
-      window.setTimeout(() => setCopyState("idle"), 1800);
-    }
-  };
-
-  const getInitials = (name: string) => {
-    const parts = name.trim().split(" ");
-    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-    return name.slice(0, 2).toUpperCase();
-  };
-
   return (
     <header className="topbar">
       <div className="brand-lockup">
-        <div className="brand-mark" aria-hidden="true">
+        <div className="brand-mark cursor-pointer" aria-hidden="true" onClick={onLeaveRoom} title="Return to Game Lobby">
           <Layers3 className="size-5" strokeWidth={2.4} />
         </div>
-        <span className="brand-name">SyncForge</span>
-        <span className="brand-version">BETA</span>
+        <span className="brand-name cursor-pointer" onClick={onLeaveRoom} title="Return to Game Lobby">
+          SyncForge
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onLeaveRoom}
+          className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground gap-1 border border-border/60"
+          title="Leave room and return to Lobby"
+        >
+          <LogOut className="size-3" />
+          <span>Lobby</span>
+        </Button>
       </div>
 
       <div className="room-tools">
@@ -96,11 +189,7 @@ function TopBar({
           spellCheck={false}
           aria-label="Room ID"
         />
-        <Button className="invite-button" variant="outline" size="sm" onClick={copyInviteLink}>
-          {copyState === "copied" ? <Check /> : <Share2 />}
-          <span>{copyState === "copied" ? "Link copied" : "Copy invite link"}</span>
-        </Button>
-        {copyState === "failed" && <span className="copy-error">Clipboard unavailable</span>}
+        <InviteFriendsPopover roomId={roomId} />
       </div>
 
       <div className="room-presence">
@@ -137,23 +226,41 @@ function TopBar({
           <span className="simulate-label">{isOffline ? "Reconnect" : "Simulate offline"}</span>
         </Button>
 
-        <div className="member-stack" aria-label={`${activeUsers.length} active users`}>
-          {activeUsers.slice(0, 4).map((member) => (
-            <div
-              key={member.id}
-              className="member-avatar flex items-center justify-center font-bold text-[10px] text-white border border-white/20 shadow-sm transition-transform hover:scale-110"
-              style={{ backgroundColor: member.color }}
-              title={member.id === localUser.id ? `${member.name} (You)` : member.name}
-              aria-label={member.name}
-            >
-              {getInitials(member.name)}
-            </div>
-          ))}
-          {activeUsers.length > 4 && (
-            <div className="member-count" title={`${activeUsers.length} active users`}>
-              +{activeUsers.length - 4}
-            </div>
-          )}
+        {/* Colored Player Avatar Pills with Host Badge */}
+        <div className="flex items-center gap-1.5 flex-wrap" aria-label={`${activeUsers.length} active users`}>
+          {activeUsers.map((member) => {
+            const isMemberHost = member.id === hostId;
+            const isMe = member.id === localUser.id;
+            return (
+              <div
+                key={member.id}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-transform hover:scale-105 shadow-sm"
+                style={{
+                  backgroundColor: `${member.color}18`,
+                  borderColor: `${member.color}60`,
+                }}
+                title={isMe ? `${member.name} (You)` : member.name}
+              >
+                <span
+                  className="size-2 rounded-full animate-pulse shrink-0"
+                  style={{ backgroundColor: member.color }}
+                />
+                <span className="font-bold text-[11px] truncate max-w-[85px]" style={{ color: member.color }}>
+                  {member.name}
+                </span>
+                {isMemberHost && (
+                  <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
+                    👑 HOST
+                  </span>
+                )}
+                {isMe && (
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    (You)
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </header>
@@ -250,6 +357,8 @@ function FileExplorer({
   onRenameFile,
   onDeleteFile,
   onImportFolder,
+  onImportFiles,
+  onOpenGitHub,
 }: {
   fileNames: string[];
   activeFileName: string;
@@ -258,11 +367,14 @@ function FileExplorer({
   onRenameFile: (oldName: string, newName: string) => void;
   onDeleteFile: (name: string) => void;
   onImportFolder: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onImportFiles: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onOpenGitHub: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [newFileName, setNewFileName] = useState("");
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleCreate = () => {
     const trimmed = newFileName.trim();
@@ -279,26 +391,6 @@ function FileExplorer({
           <FolderOpen className="size-4" /> Explorer
         </div>
         <div className="flex items-center gap-1">
-          <input
-            ref={folderInputRef}
-            type="file"
-            // @ts-expect-error webkitdirectory is standard in browser engines
-            webkitdirectory=""
-            directory=""
-            multiple
-            className="hidden"
-            onChange={onImportFolder}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="explorer-add"
-            aria-label="Import folder"
-            title="Import local folder"
-            onClick={() => folderInputRef.current?.click()}
-          >
-            <FolderUp className="size-4" />
-          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -313,6 +405,60 @@ function FileExplorer({
             <FilePlus2 className="size-4" />
           </Button>
         </div>
+      </div>
+
+      {/* Prominent File Import Actions */}
+      <div className="p-2 border-b border-border space-y-1.5 bg-background/30">
+        <input
+          ref={folderInputRef}
+          type="file"
+          // @ts-expect-error webkitdirectory is standard in browser engines
+          webkitdirectory=""
+          directory=""
+          multiple
+          className="hidden"
+          onChange={onImportFolder}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={onImportFiles}
+        />
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start gap-2 h-8 text-xs font-semibold border-border/80 bg-card hover:bg-accent hover:text-accent-foreground text-foreground shadow-xs"
+            >
+              <FolderUp className="size-3.5 text-primary" />
+              <span className="truncate">Open Local File/Folder (PC)</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuItem onClick={() => fileInputRef.current?.click()} className="gap-2 cursor-pointer text-xs">
+              <FileCode className="size-3.5 text-primary" />
+              <span>Open Local File(s) (PC)...</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => folderInputRef.current?.click()} className="gap-2 cursor-pointer text-xs">
+              <FolderOpen className="size-3.5 text-primary" />
+              <span>Open Local Folder (PC)...</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full justify-start gap-2 h-8 text-xs font-semibold border-border/80 bg-card hover:bg-accent hover:text-accent-foreground text-foreground shadow-xs"
+          onClick={onOpenGitHub}
+        >
+          <Github className="size-3.5" />
+          <span className="truncate">Import from GitHub</span>
+        </Button>
       </div>
 
       <div className="workspace-caption">
@@ -386,6 +532,8 @@ function EditorPane({
   canRedo,
   onUndo,
   onRedo,
+  onOpenFolderPicker,
+  onOpenGitHub,
 }: {
   fileName: string;
   yText: ReturnType<typeof useYjsCollaboration>["activeYText"];
@@ -395,6 +543,8 @@ function EditorPane({
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onOpenFolderPicker: () => void;
+  onOpenGitHub: () => void;
 }) {
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
 
@@ -448,7 +598,31 @@ function EditorPane({
               <Redo2 />
             </Button>
           </div>
+
           <span className="toolbar-divider" />
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs font-medium border-border"
+            onClick={onOpenFolderPicker}
+            title="Open local files or folders"
+          >
+            <FolderUp className="size-3.5" />
+            <span className="hidden sm:inline">Open Local</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs font-medium border-border"
+            onClick={onOpenGitHub}
+            title="Import from GitHub repository"
+          >
+            <Github className="size-3.5" />
+            <span className="hidden sm:inline">GitHub</span>
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
@@ -520,28 +694,17 @@ function StatusBar({
   );
 }
 
-export function EditorWorkspace() {
-  // Read room from URL query parameter ?room=<id>
-  const [roomId, setRoomId] = useState(() => {
-    if (typeof window !== "undefined") {
-      const searchRoom = new URLSearchParams(window.location.search).get("room");
-      if (searchRoom && searchRoom.trim()) return searchRoom.trim();
-    }
-    return "juniper-lab";
-  });
-
+function ActiveRoomWorkspace({
+  roomId,
+  setRoomId,
+  onLeaveRoom,
+}: {
+  roomId: string;
+  setRoomId: (roomId: string) => void;
+  onLeaveRoom: () => void;
+}) {
   const [githubModalOpen, setGithubModalOpen] = useState(false);
-
-  // Sync room ID changes back to browser URL
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      if (url.searchParams.get("room") !== roomId) {
-        url.searchParams.set("room", roomId);
-        window.history.replaceState(null, "", url.toString());
-      }
-    }
-  }, [roomId]);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const {
     localUser,
@@ -564,6 +727,8 @@ export function EditorWorkspace() {
     importFiles,
     ydoc,
     wsProvider,
+    isHost,
+    hostId,
     isApproved,
     hasRequestedJoin,
     joinRequests,
@@ -639,6 +804,27 @@ export function EditorWorkspace() {
     e.target.value = "";
   };
 
+  // Handle individual local files import
+  const handleImportFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const importedList: { name: string; content: string }[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.size > 1024 * 500) continue;
+      try {
+        const text = await file.text();
+        importedList.push({ name: file.name, content: text });
+      } catch {}
+    }
+
+    if (importedList.length > 0) {
+      importFiles(importedList);
+    }
+    e.target.value = "";
+  };
+
   // Helper for GitHub modal to get current files
   const getAllFiles = useCallback(() => {
     if (!ydoc) return [];
@@ -652,6 +838,17 @@ export function EditorWorkspace() {
 
   return (
     <main className="syncforge-app relative">
+      <input
+        ref={folderInputRef}
+        type="file"
+        // @ts-expect-error webkitdirectory is standard in browser engines
+        webkitdirectory=""
+        directory=""
+        multiple
+        className="hidden"
+        onChange={handleImportFolder}
+      />
+
       <TopBar
         roomId={roomId}
         setRoomId={setRoomId}
@@ -659,7 +856,9 @@ export function EditorWorkspace() {
         toggleOffline={toggleOffline}
         activeUsers={activeUsers}
         localUser={localUser}
+        hostId={hostId}
         onOpenGitHub={() => setGithubModalOpen(true)}
+        onLeaveRoom={onLeaveRoom}
       />
 
       <div className="workspace-body">
@@ -671,6 +870,8 @@ export function EditorWorkspace() {
           onRenameFile={renameFile}
           onDeleteFile={deleteFile}
           onImportFolder={handleImportFolder}
+          onImportFiles={handleImportFiles}
+          onOpenGitHub={() => setGithubModalOpen(true)}
         />
         <EditorPane
           fileName={activeFileName}
@@ -681,6 +882,8 @@ export function EditorWorkspace() {
           canRedo={canRedo}
           onUndo={undo}
           onRedo={redo}
+          onOpenFolderPicker={() => folderInputRef.current?.click()}
+          onOpenGitHub={() => setGithubModalOpen(true)}
         />
       </div>
 
@@ -691,11 +894,13 @@ export function EditorWorkspace() {
       />
 
       {/* Host Live Join Request Notifications */}
-      <HostRequestBanner
-        requests={joinRequests}
-        onAccept={acceptJoinRequest}
-        onDecline={declineJoinRequest}
-      />
+      {isHost && (
+        <HostRequestBanner
+          requests={joinRequests}
+          onAccept={acceptJoinRequest}
+          onDecline={declineJoinRequest}
+        />
+      )}
 
       {/* Waiting Room Modal for unapproved guests */}
       {!isApproved && (
@@ -715,5 +920,53 @@ export function EditorWorkspace() {
         getAllFiles={getAllFiles}
       />
     </main>
+  );
+}
+
+export function EditorWorkspace() {
+  // Read room from URL query parameter ?room=<id>
+  const [roomId, setRoomId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      const searchRoom = new URLSearchParams(window.location.search).get("room");
+      if (searchRoom && searchRoom.trim()) return searchRoom.trim();
+    }
+    return null;
+  });
+
+  // Sync room ID changes back to browser URL
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (roomId) {
+        if (url.searchParams.get("room") !== roomId) {
+          url.searchParams.set("room", roomId);
+          window.history.pushState(null, "", url.toString());
+        }
+      } else {
+        if (url.searchParams.has("room")) {
+          url.searchParams.delete("room");
+          window.history.pushState(null, "", url.pathname);
+        }
+      }
+    }
+  }, [roomId]);
+
+  // If no room is specified in URL, show Game Lobby Start Screen
+  if (!roomId) {
+    return (
+      <LobbyScreen
+        onEnterRoom={(code) => {
+          setRoomId(code);
+        }}
+      />
+    );
+  }
+
+  return (
+    <ActiveRoomWorkspace
+      roomId={roomId}
+      setRoomId={setRoomId}
+      onLeaveRoom={() => setRoomId(null)}
+    />
   );
 }

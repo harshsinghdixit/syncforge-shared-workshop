@@ -2,11 +2,14 @@
   "name": "syncforge-ws-server",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "start": "HOST=0.0.0.0 npx y-websocket"
+    "start": "node server.js"
   },
   "dependencies": {
-    "@y/websocket-server": "latest",
-    "y-websocket": "latest"
+    "lib0": "^0.2.99",
+    "ws": "^6.2.1",
+    "y-protocols": "^1.0.6",
+    "yjs": "13.6.33"
   }
 }

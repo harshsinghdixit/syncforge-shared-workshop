@@ -62,7 +62,40 @@ const customEditorTheme = EditorView.theme({
     backgroundColor: "rgba(255, 255, 255, 0.06)",
     color: "var(--color-brand, #38bdf8) !important",
   },
+  ".cm-ySelection": {
+    opacity: "0.85 !important",
+    borderRadius: "2px",
+  },
+  ".cm-ySelectionCaret": {
+    position: "relative !important",
+    borderLeft: "2.5px solid !important",
+    marginRight: "-1px",
+    display: "inline-block",
+    filter: "drop-shadow(0 0 5px currentColor)",
+    zIndex: "40",
+  },
+  ".cm-ySelectionInfo": {
+    position: "absolute !important",
+    top: "-1.55em !important",
+    left: "-2px !important",
+    fontSize: "10px !important",
+    fontFamily: "var(--font-code)",
+    fontWeight: "700 !important",
+    color: "#ffffff !important",
+    padding: "1px 6px !important",
+    borderRadius: "4px !important",
+    zIndex: "50 !important",
+    whiteSpace: "nowrap !important",
+    pointerEvents: "none !important",
+    opacity: "1 !important",
+    visibility: "visible !important",
+    display: "inline-flex !important",
+    lineHeight: "1.3 !important",
+    boxShadow: "0 2px 6px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.2)",
+    textShadow: "0 1px 2px rgba(0, 0, 0, 0.8)",
+  },
 });
+
 
 export function CodeMirrorEditor({
   fileName,
