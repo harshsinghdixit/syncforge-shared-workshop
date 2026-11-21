@@ -55,7 +55,7 @@ export function GitHubModal({
         Accept: "application/vnd.github.v3+json",
       };
       if (trimmedToken) {
-        headers.Authorization = `Bearer ${trimmedToken}`;
+        headers["Authorization"] = `Bearer ${trimmedToken}`;
       }
 
       // Fetch git tree

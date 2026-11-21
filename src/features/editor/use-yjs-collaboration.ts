@@ -62,12 +62,14 @@ export function persistLocalUser(user: RemoteUser) {
 }
 
 export function getOrCreateLocalUser(): RemoteUser {
+  const defaultColor = USER_COLORS[0] ?? { color: "#ef4444", colorLight: "#ef444433" };
+
   if (typeof window === "undefined") {
     return {
       id: "user-server",
       name: "Swift Dev",
-      color: USER_COLORS[0].color,
-      colorLight: USER_COLORS[0].colorLight,
+      color: defaultColor.color,
+      colorLight: defaultColor.colorLight,
     };
   }
 
@@ -96,10 +98,10 @@ export function getOrCreateLocalUser(): RemoteUser {
   }
 
   const id = `user-${Math.random().toString(36).substring(2, 9)}`;
-  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)] ?? "Swift";
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)] ?? "Dev";
   const name = `${adj} ${noun}`;
-  const colorObj = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
+  const colorObj = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)] ?? defaultColor;
 
   const user = {
     id,
@@ -160,7 +162,8 @@ export function useYjsCollaboration(roomId: string) {
     ydocRef.current = ydoc;
     setYdoc(ydoc);
 
-    const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:1234";
+    const envWsUrl = (import.meta.env as Record<string, string | undefined>)["VITE_WS_URL"];
+    const wsUrl = envWsUrl || "ws://localhost:1234";
     const wsProvider = new WebsocketProvider(wsUrl, roomId, ydoc, { connect: true });
     wsProviderRef.current = wsProvider;
     setWsProvider(wsProvider);
@@ -227,14 +230,15 @@ export function useYjsCollaboration(roomId: string) {
     const updateActiveUsers = () => {
       const states = wsProvider.awareness.getStates();
       const users: RemoteUser[] = [];
-      states.forEach((state) => {
-        if (state.user && state.user.id && state.user.name) {
+      states.forEach((state: Record<string, any>) => {
+        const u = state["user"];
+        if (u && u["id"] && u["name"]) {
           users.push({
-            id: state.user.id,
-            name: state.user.name,
-            color: state.user.color || "#38bdf8",
-            colorLight: state.user.colorLight || "#38bdf833",
-            mouse: state.mouse !== undefined ? state.mouse : (state.user.mouse || null),
+            id: u["id"],
+            name: u["name"],
+            color: u["color"] || "#38bdf8",
+            colorLight: u["colorLight"] || "#38bdf833",
+            mouse: state["mouse"] !== undefined ? state["mouse"] : (u["mouse"] || null),
           });
         }
       });

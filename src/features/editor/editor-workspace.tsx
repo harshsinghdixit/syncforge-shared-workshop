@@ -938,6 +938,7 @@ function ActiveRoomWorkspace({
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      if (!file) continue;
       const relPath = file.webkitRelativePath || file.name;
       const lower = relPath.toLowerCase();
 
@@ -967,6 +968,7 @@ function ActiveRoomWorkspace({
     const importedList: { name: string; content: string }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      if (!file) continue;
       if (file.size > 1024 * 500) continue;
       try {
         const text = await file.text();
