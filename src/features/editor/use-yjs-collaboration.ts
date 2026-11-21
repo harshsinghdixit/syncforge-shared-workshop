@@ -4,11 +4,17 @@ import { WebsocketProvider } from "y-websocket";
 import { IndexeddbPersistence } from "y-indexeddb";
 import { toast } from "sonner";
 
+export interface MousePosition {
+  x: number; // percentage 0 - 100
+  y: number; // percentage 0 - 100
+}
+
 export interface RemoteUser {
   id: string;
   name: string;
   color: string;
   colorLight: string;
+  mouse?: MousePosition | null;
 }
 
 export interface JoinRequest {
@@ -23,20 +29,31 @@ export interface ApprovedUser {
   approvedAt: number;
 }
 
-const USER_COLORS = [
-  { color: "#38bdf8", colorLight: "#38bdf833" },
-  { color: "#4ade80", colorLight: "#4ade8033" },
-  { color: "#f472b6", colorLight: "#f472b633" },
-  { color: "#fbbf24", colorLight: "#fbbf2433" },
-  { color: "#a78bfa", colorLight: "#a78bfa33" },
-  { color: "#fb923c", colorLight: "#fb923c33" },
-  { color: "#2dd4bf", colorLight: "#2dd4bf33" },
+export interface UserColor {
+  name: string;
+  color: string;
+  colorLight: string;
+}
+
+export const AMONG_US_COLORS: UserColor[] = [
+  { name: "Red", color: "#ef4444", colorLight: "#ef444433" },
+  { name: "Cyan", color: "#06b6d4", colorLight: "#06b6d433" },
+  { name: "Lime", color: "#84cc16", colorLight: "#84cc1633" },
+  { name: "Yellow", color: "#eab308", colorLight: "#eab30833" },
+  { name: "Orange", color: "#f97316", colorLight: "#f9731633" },
+  { name: "Pink", color: "#ec4899", colorLight: "#ec489933" },
+  { name: "Purple", color: "#a855f7", colorLight: "#a855f733" },
+  { name: "Blue", color: "#3b82f6", colorLight: "#3b82f633" },
+  { name: "Teal", color: "#14b8a6", colorLight: "#14b8a633" },
+  { name: "Coral", color: "#f43f5e", colorLight: "#f43f5e33" },
 ];
+
+export const USER_COLORS: UserColor[] = AMONG_US_COLORS;
 
 const ADJECTIVES = ["Swift", "Cosmic", "Neon", "Silent", "Quantum", "Hyper", "Solar", "Vivid"];
 const NOUNS = ["Coder", "Forge", "Hacker", "Pioneer", "Voyager", "Architect", "Dev", "Spark"];
 
-function persistLocalUser(user: RemoteUser) {
+export function persistLocalUser(user: RemoteUser) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem("syncforge_user_id", user.id);
   window.localStorage.setItem("syncforge_user_name", user.name);
@@ -217,6 +234,7 @@ export function useYjsCollaboration(roomId: string) {
             name: state.user.name,
             color: state.user.color || "#38bdf8",
             colorLight: state.user.colorLight || "#38bdf833",
+            mouse: state.mouse !== undefined ? state.mouse : (state.user.mouse || null),
           });
         }
       });
@@ -554,6 +572,43 @@ export function useYjsCollaboration(roomId: string) {
     });
   }, []);
 
+  const updateUserProfile = useCallback(
+    (updates: { name?: string; color?: string; colorLight?: string }) => {
+      setLocalUser((prev) => {
+        const next: RemoteUser = {
+          ...prev,
+          name: updates.name !== undefined ? (updates.name.trim() || prev.name) : prev.name,
+          color: updates.color !== undefined ? updates.color : prev.color,
+          colorLight: updates.colorLight !== undefined ? updates.colorLight : (updates.color ? `${updates.color}33` : prev.colorLight),
+        };
+        persistLocalUser(next);
+        if (wsProviderRef.current) {
+          wsProviderRef.current.awareness.setLocalStateField("user", next);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const lastMouseEmitRef = useRef<number>(0);
+  const updateMousePosition = useCallback(
+    (pos: MousePosition | null) => {
+      if (!wsProviderRef.current) return;
+      const now = Date.now();
+      if (pos === null) {
+        lastMouseEmitRef.current = now;
+        wsProviderRef.current.awareness.setLocalStateField("mouse", null);
+        return;
+      }
+      if (now - lastMouseEmitRef.current >= 40) {
+        lastMouseEmitRef.current = now;
+        wsProviderRef.current.awareness.setLocalStateField("mouse", pos);
+      }
+    },
+    []
+  );
+
   const declineJoinRequest = useCallback((userId: string) => {
     if (!ydocRef.current) return;
     const joinRequestsMap = ydocRef.current.getMap<JoinRequest>("joinRequests");
@@ -563,6 +618,8 @@ export function useYjsCollaboration(roomId: string) {
   return {
     localUser,
     activeUsers,
+    updateUserProfile,
+    updateMousePosition,
     fileNames,
     activeFileName,
     setActiveFileName,

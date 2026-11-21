@@ -10,10 +10,15 @@ import {
   FolderGit2,
   ArrowRight,
   Crown,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { getOrCreateLocalUser, type RemoteUser } from "./use-yjs-collaboration";
+import {
+  getOrCreateLocalUser,
+  persistLocalUser,
+  USER_COLORS,
+  type RemoteUser,
+} from "./use-yjs-collaboration";
 
 interface LobbyScreenProps {
   onEnterRoom: (roomId: string, isCreator: boolean) => void;
@@ -29,9 +34,18 @@ export function LobbyScreen({ onEnterRoom }: LobbyScreenProps) {
     setUserName(newName);
     const updated = { ...localUser, name: newName.trim() || localUser.name };
     setLocalUser(updated);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("syncforge_user_name", updated.name);
-    }
+    persistLocalUser(updated);
+  };
+
+  const handleSelectColor = (colorHex: string, colorLightHex: string) => {
+    const updated = {
+      ...localUser,
+      name: userName.trim() || localUser.name,
+      color: colorHex,
+      colorLight: colorLightHex,
+    };
+    setLocalUser(updated);
+    persistLocalUser(updated);
   };
 
   const handleRandomizeName = () => {
@@ -129,7 +143,7 @@ export function LobbyScreen({ onEnterRoom }: LobbyScreenProps) {
 
           <div className="flex items-center gap-3">
             <div
-              className="size-11 rounded-xl flex items-center justify-center font-bold text-white text-sm shadow-md shrink-0 border border-white/20"
+              className="size-11 rounded-xl flex items-center justify-center font-bold text-white text-sm shadow-md shrink-0 border border-white/20 transition-colors duration-200"
               style={{ backgroundColor: localUser.color }}
             >
               {localUser.name.slice(0, 2).toUpperCase()}
@@ -144,6 +158,41 @@ export function LobbyScreen({ onEnterRoom }: LobbyScreenProps) {
                 className="bg-background/70 border-input h-10 font-medium text-foreground"
                 maxLength={25}
               />
+            </div>
+          </div>
+
+          {/* Among Us Color Palette Row */}
+          <div className="pt-1.5 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Suit Color
+              </span>
+              <span className="text-[10px] font-medium text-muted-foreground">
+                {USER_COLORS.find((c) => c.color === localUser.color)?.name || "Custom"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-1 sm:gap-1.5 flex-wrap pt-0.5">
+              {USER_COLORS.map((swatch) => {
+                const isSelected = swatch.color === localUser.color;
+                return (
+                  <button
+                    key={swatch.name}
+                    type="button"
+                    onClick={() => handleSelectColor(swatch.color, swatch.colorLight)}
+                    className={`relative size-7 rounded-full transition-all duration-150 flex items-center justify-center shrink-0 shadow-sm ${
+                      isSelected
+                        ? "ring-2 ring-primary ring-offset-2 ring-offset-card scale-110 z-10"
+                        : "hover:scale-105 opacity-85 hover:opacity-100"
+                    }`}
+                    style={{ backgroundColor: swatch.color }}
+                    title={`Suit: ${swatch.name}`}
+                  >
+                    {isSelected && (
+                      <Check className="size-3.5 text-white stroke-[3] drop-shadow-md" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

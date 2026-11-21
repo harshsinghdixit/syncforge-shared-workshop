@@ -36,7 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { useYjsCollaboration, type RemoteUser } from "./use-yjs-collaboration";
+import { useYjsCollaboration, USER_COLORS, type RemoteUser } from "./use-yjs-collaboration";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { GitHubModal } from "./github-modal";
 import { WaitingRoomModal, HostRequestBanner } from "./waiting-room";
@@ -132,6 +132,147 @@ function InviteFriendsPopover({ roomId }: { roomId: string }) {
   );
 }
 
+function UserProfilePopover({
+  localUser,
+  activeUsers,
+  isHost,
+  onUpdateUser,
+}: {
+  localUser: RemoteUser;
+  activeUsers: RemoteUser[];
+  isHost: boolean;
+  onUpdateUser: (updates: { name?: string; color?: string; colorLight?: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [nameInput, setNameInput] = useState(localUser.name);
+
+  // Colors taken by other connected users in this room
+  const otherTakenColors = useMemo(() => {
+    const set = new Set<string>();
+    activeUsers.forEach((u) => {
+      if (u.id !== localUser.id) {
+        set.add(u.color.toLowerCase());
+      }
+    });
+    return set;
+  }, [activeUsers, localUser.id]);
+
+  const handleSaveName = () => {
+    if (nameInput.trim()) {
+      onUpdateUser({ name: nameInput.trim() });
+    }
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all hover:scale-105 shadow-sm cursor-pointer outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-primary"
+          style={{
+            backgroundColor: `${localUser.color}18`,
+            borderColor: `${localUser.color}60`,
+          }}
+          title={`${localUser.name} (You) — Click to customize identity`}
+        >
+          <span
+            className="size-2 rounded-full animate-pulse shrink-0"
+            style={{ backgroundColor: localUser.color }}
+          />
+          <span className="font-bold text-[11px] truncate max-w-[90px]" style={{ color: localUser.color }}>
+            {localUser.name}
+          </span>
+          {isHost && (
+            <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
+              👑 HOST
+            </span>
+          )}
+          <span className="text-[10px] text-muted-foreground font-mono font-normal">
+            (You)
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-3 bg-card/95 backdrop-blur-md border-border shadow-xl space-y-3 z-50">
+        <div className="space-y-1">
+          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+            Player Profile
+          </span>
+          <div className="flex items-center gap-2 pt-0.5">
+            <Input
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onBlur={handleSaveName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleSaveName();
+                  setOpen(false);
+                }
+              }}
+              placeholder="Your display name..."
+              className="h-8 text-xs font-medium bg-background/80"
+              maxLength={25}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5 pt-1 border-t border-border/60">
+          <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground">
+            <span className="uppercase tracking-wider">Suit Color</span>
+            <span>{USER_COLORS.find((c) => c.color === localUser.color)?.name || "Custom"}</span>
+          </div>
+          <div className="grid grid-cols-5 gap-1.5 pt-0.5">
+            {USER_COLORS.map((swatch) => {
+              const isSelected = swatch.color === localUser.color;
+              const isTaken = otherTakenColors.has(swatch.color.toLowerCase());
+
+              return (
+                <button
+                  key={swatch.name}
+                  type="button"
+                  onClick={() => {
+                    onUpdateUser({
+                      name: nameInput.trim() || localUser.name,
+                      color: swatch.color,
+                      colorLight: swatch.colorLight,
+                    });
+                  }}
+                  className={`relative size-7 rounded-full flex items-center justify-center transition-all ${
+                    isSelected
+                      ? "ring-2 ring-primary ring-offset-2 ring-offset-card scale-110 z-10"
+                      : isTaken
+                      ? "opacity-40 hover:opacity-75 ring-1 ring-muted-foreground/30 hover:scale-105"
+                      : "hover:scale-110 opacity-90 hover:opacity-100"
+                  }`}
+                  style={{ backgroundColor: swatch.color }}
+                  title={
+                    isSelected
+                      ? `${swatch.name} (Current)`
+                      : isTaken
+                      ? `${swatch.name} (Taken by peer)`
+                      : swatch.name
+                  }
+                >
+                  {isSelected && (
+                    <Check className="size-3.5 text-white stroke-[3] drop-shadow-md" />
+                  )}
+                  {isTaken && !isSelected && (
+                    <span className="size-1.5 rounded-full bg-black/60 shadow-xs" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {otherTakenColors.size > 0 && (
+            <p className="text-[9px] text-muted-foreground text-center pt-0.5">
+              Dimmed swatches are taken by teammates
+            </p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function TopBar({
   roomId,
   setRoomId,
@@ -142,6 +283,7 @@ function TopBar({
   hostId,
   onOpenGitHub,
   onLeaveRoom,
+  onUpdateUser,
 }: {
   roomId: string;
   setRoomId: (roomId: string) => void;
@@ -152,6 +294,7 @@ function TopBar({
   hostId: string | null;
   onOpenGitHub: () => void;
   onLeaveRoom: () => void;
+  onUpdateUser: (updates: { name?: string; color?: string; colorLight?: string }) => void;
 }) {
   return (
     <header className="topbar">
@@ -210,11 +353,24 @@ function TopBar({
           <span>{isOffline ? "Offline" : "Online"}</span>
         </div>
 
-        {/* Colored Player Avatar Pills with Host Badge */}
+        {/* Compact Color Legend / Player Pills with Color Selection on local user */}
         <div className="flex items-center gap-1.5 flex-wrap" aria-label={`${activeUsers.length} active users`}>
           {activeUsers.map((member) => {
             const isMemberHost = member.id === hostId;
             const isMe = member.id === localUser.id;
+
+            if (isMe) {
+              return (
+                <UserProfilePopover
+                  key={member.id}
+                  localUser={localUser}
+                  activeUsers={activeUsers}
+                  isHost={isMemberHost}
+                  onUpdateUser={onUpdateUser}
+                />
+              );
+            }
+
             return (
               <div
                 key={member.id}
@@ -223,7 +379,7 @@ function TopBar({
                   backgroundColor: `${member.color}18`,
                   borderColor: `${member.color}60`,
                 }}
-                title={isMe ? `${member.name} (You)` : member.name}
+                title={member.name}
               >
                 <span
                   className="size-2 rounded-full animate-pulse shrink-0"
@@ -235,11 +391,6 @@ function TopBar({
                 {isMemberHost && (
                   <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
                     👑 HOST
-                  </span>
-                )}
-                {isMe && (
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    (You)
                   </span>
                 )}
               </div>
@@ -693,6 +844,8 @@ function ActiveRoomWorkspace({
   const {
     localUser,
     activeUsers,
+    updateUserProfile,
+    updateMousePosition,
     fileNames,
     activeFileName,
     setActiveFileName,
@@ -720,6 +873,24 @@ function ActiveRoomWorkspace({
     acceptJoinRequest,
     declineJoinRequest,
   } = useYjsCollaboration(roomId);
+
+  const workspaceRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!workspaceRef.current) return;
+      const rect = workspaceRef.current.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+      updateMousePosition({ x, y });
+    },
+    [updateMousePosition]
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    updateMousePosition(null);
+  }, [updateMousePosition]);
 
   // Keyboard shortcut listener for global Ctrl+Z / Ctrl+Y
   useEffect(() => {
@@ -821,7 +992,12 @@ function ActiveRoomWorkspace({
   }, [ydoc, fileNames]);
 
   return (
-    <main className="syncforge-app relative">
+    <main
+      ref={workspaceRef}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      className="syncforge-app relative overflow-hidden"
+    >
       <input
         ref={folderInputRef}
         type="file"
@@ -843,9 +1019,10 @@ function ActiveRoomWorkspace({
         hostId={hostId}
         onOpenGitHub={() => setGithubModalOpen(true)}
         onLeaveRoom={onLeaveRoom}
+        onUpdateUser={updateUserProfile}
       />
 
-      <div className="workspace-body">
+      <div className="workspace-body relative">
         <FileExplorer
           fileNames={fileNames}
           activeFileName={activeFileName}
@@ -869,6 +1046,43 @@ function ActiveRoomWorkspace({
           onOpenFolderPicker={() => folderInputRef.current?.click()}
           onOpenGitHub={() => setGithubModalOpen(true)}
         />
+      </div>
+
+      {/* Color-only live mouse pointers overlay (NO text label attached) */}
+      <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden" aria-hidden="true">
+        {activeUsers
+          .filter((user) => user.id !== localUser.id && user.mouse && typeof user.mouse.x === "number" && typeof user.mouse.y === "number")
+          .map((remotePeer) => {
+            const { x, y } = remotePeer.mouse!;
+            return (
+              <div
+                key={remotePeer.id}
+                className="pointer-events-none absolute will-change-transform transition-all duration-75 ease-out"
+                style={{
+                  left: `${x}%`,
+                  top: `${y}%`,
+                  transform: "translate3d(0, 0, 0)",
+                }}
+              >
+                {/* Crisp SVG pointer arrow in user's suit color with NO name tag */}
+                <svg
+                  className="size-5 -translate-x-1 -translate-y-1 drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M3.5 2.5L10 21.5L13.8 13.8L21.5 10L3.5 2.5Z"
+                    fill={remotePeer.color}
+                    stroke="#ffffff"
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </div>
+            );
+          })}
       </div>
 
       <StatusBar
