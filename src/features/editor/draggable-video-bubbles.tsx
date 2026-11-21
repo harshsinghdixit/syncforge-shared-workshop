@@ -4,7 +4,7 @@ import {
   Minimize2,
   Maximize2,
   VideoOff,
-  Sparkles,
+  MicOff,
 } from "lucide-react";
 import type { RemoteUser } from "./use-yjs-collaboration";
 import type { PeerStream } from "./use-webrtc-media";
@@ -24,6 +24,46 @@ interface DraggableVideoBubblesProps {
 interface BubblePosition {
   x: number;
   y: number;
+}
+
+// Dedicated hidden audio player for guaranteed remote voice reproduction
+function RemotePeerAudio({ stream }: { stream: MediaStream }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+
+    if (el.srcObject !== stream) {
+      el.srcObject = stream;
+    }
+
+    const tryPlay = () => {
+      el.play().catch(() => {});
+    };
+
+    tryPlay();
+
+    // One-time window gesture listener to resume audio if autoplay was blocked
+    const resumeOnGesture = () => {
+      el.play().catch(() => {});
+      window.removeEventListener("pointerdown", resumeOnGesture);
+      window.removeEventListener("keydown", resumeOnGesture);
+    };
+
+    window.addEventListener("pointerdown", resumeOnGesture);
+    window.addEventListener("keydown", resumeOnGesture);
+
+    return () => {
+      window.removeEventListener("pointerdown", resumeOnGesture);
+      window.removeEventListener("keydown", resumeOnGesture);
+      if (el.srcObject) {
+        el.srcObject = null;
+      }
+    };
+  }, [stream]);
+
+  return <audio ref={audioRef} autoPlay playsInline className="hidden" />;
 }
 
 function VideoTile({
@@ -137,7 +177,6 @@ function VideoTile({
 
   // Transparent Canvas Cutout Rendering Loop (OBS-Style)
   useEffect(() => {
-    // Only run canvas segmentation when Remove BG is active, video is live, and AI model is loaded
     if (!cleanBg || !hasLiveVideo || !isAiLoaded) {
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
@@ -150,7 +189,6 @@ function VideoTile({
     const canvasEl = canvasRef.current;
     if (!videoEl || !canvasEl) return;
 
-    // Create or reuse offscreen mask canvas
     if (!maskCanvasRef.current) {
       maskCanvasRef.current = document.createElement("canvas");
     }
@@ -161,7 +199,6 @@ function VideoTile({
     const renderLoop = (time: number) => {
       if (!isRunning) return;
 
-      // Throttle segmentation to ~20 FPS (~50ms) to ensure lightweight CPU/GPU usage
       if (time - lastProcessTimeRef.current >= 48) {
         lastProcessTimeRef.current = time;
 
@@ -193,35 +230,29 @@ function VideoTile({
 
               for (let i = 0; i < totalPixels; i++) {
                 const conf = maskValues[i] ?? 0;
-                // Person is 1, background is 0. Guard polarity if inverted.
                 const personScore: number = isPersonInverted ? 1 - conf : conf;
                 const alpha = Math.min(255, Math.max(0, Math.round(personScore * 255)));
 
                 const pIdx = i * 4;
-                data[pIdx] = 0; // R
-                data[pIdx + 1] = 0; // G
-                data[pIdx + 2] = 0; // B
-                data[pIdx + 3] = alpha; // Alpha
+                data[pIdx] = 0;
+                data[pIdx + 1] = 0;
+                data[pIdx + 2] = 0;
+                data[pIdx + 3] = alpha;
               }
 
               maskCtx.putImageData(maskImgData, 0, 0);
 
-              // Clear destination canvas completely (100% transparent)
               ctx.clearRect(0, 0, vWidth, vHeight);
-
-              // 1. Draw raw video frame onto main canvas
               ctx.save();
               ctx.globalCompositeOperation = "source-over";
               ctx.drawImage(videoEl, 0, 0, vWidth, vHeight);
 
-              // 2. Composite alpha mask with destination-in and light blur for smooth hair/edges
               ctx.globalCompositeOperation = "destination-in";
               ctx.filter = "blur(1.5px)";
               ctx.drawImage(maskCanvas, 0, 0, vWidth, vHeight);
               ctx.restore();
             }
           } else if (ctx) {
-            // Fallback: draw video frame if segmenter is waiting or failed
             ctx.clearRect(0, 0, vWidth, vHeight);
             ctx.drawImage(videoEl, 0, 0, vWidth, vHeight);
           }
@@ -242,7 +273,6 @@ function VideoTile({
     };
   }, [cleanBg, hasLiveVideo, isAiLoaded]);
 
-  // Is OBS-style cutout active?
   const isCutoutMode = cleanBg && hasLiveVideo;
 
   return (
@@ -262,12 +292,12 @@ function VideoTile({
           : undefined,
       }}
     >
-      {/* Underlying Video Element */}
+      {/* Video Element (Muted because voice is played through dedicated RemotePeerAudio) */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isLocal}
+        muted
         className={`object-cover pointer-events-none ${
           isCutoutMode
             ? "sr-only opacity-0 absolute pointer-events-none"
@@ -302,7 +332,7 @@ function VideoTile({
         </div>
       )}
 
-      {/* Name and mic status tag: always visible on circular tile, visible only on hover in cutout mode */}
+      {/* Name and mic status tag */}
       <div
         className={`absolute bottom-1 inset-x-0 flex items-center justify-center pointer-events-none transition-opacity duration-150 ${
           isCutoutMode ? "opacity-0 group-hover:opacity-100" : "opacity-85 hover:opacity-100"
@@ -316,7 +346,7 @@ function VideoTile({
         </span>
       </div>
 
-      {/* Speaking glow indicator: ring on circular tile, subtle badge on hover in cutout mode */}
+      {/* Speaking glow indicator */}
       {isSpeaking && (
         <div
           className={`pointer-events-none ${
@@ -341,13 +371,10 @@ export function DraggableVideoBubbles({
   speakingUserIds,
   cleanBg,
 }: DraggableVideoBubblesProps) {
-  // Store custom drag position for each bubble ID
   const [positions, setPositions] = useState<Record<string, BubblePosition>>({});
-  // Store custom width for each bubble ID in cutout mode (default: 200px)
   const [sizes, setSizes] = useState<Record<string, number>>({});
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  // Dragging state
   const dragInfoRef = useRef<{
     id: string;
     startX: number;
@@ -356,14 +383,16 @@ export function DraggableVideoBubbles({
     origY: number;
   } | null>(null);
 
-  // Resizing state
   const resizeInfoRef = useRef<{
     id: string;
     startX: number;
     origWidth: number;
   } | null>(null);
 
-  // Compute feed list: Local user + remote peers with streams or camera/mic active
+  // Compute feed list for ALL active users in the room (Local + All Remote Peers from awareness)
+  const peerStreamsMap = new Map<string, MediaStream>();
+  peerStreams.forEach((ps) => peerStreamsMap.set(ps.userId, ps.stream));
+
   const feeds = [
     {
       id: localUser.id,
@@ -373,34 +402,32 @@ export function DraggableVideoBubbles({
       stream: localStream,
       isSpeaking: isMicOn && speakingUserIds.has(localUser.id),
     },
-    ...peerStreams.map((ps) => {
-      const user = activeUsers.find((u) => u.id === ps.userId);
-      const name = user ? user.name : "Peer";
-      const color = user ? user.color : "#38bdf8";
-      const isSpeaking = speakingUserIds.has(ps.userId);
-
-      return {
-        id: ps.userId,
-        name,
-        color,
-        isLocal: false,
-        stream: ps.stream,
-        isSpeaking,
-      };
-    }),
+    ...activeUsers
+      .filter((u) => u.id !== localUser.id)
+      .map((remoteUser) => {
+        const stream = peerStreamsMap.get(remoteUser.id) ?? null;
+        const isSpeaking = speakingUserIds.has(remoteUser.id);
+        return {
+          id: remoteUser.id,
+          name: remoteUser.name,
+          color: remoteUser.color,
+          isLocal: false,
+          stream,
+          isSpeaking,
+        };
+      }),
   ];
 
-  // Default initial grid placement
+  // Stagger default initial placement cleanly so bubbles never overlap
   const getDefaultPosition = (index: number): BubblePosition => {
     if (typeof window === "undefined") return { x: 20, y: 70 };
     return {
       x: window.innerWidth - 180,
-      y: 70 + index * 160,
+      y: 70 + index * 145,
     };
   };
 
   const handlePointerDown = (id: string, e: React.PointerEvent<HTMLDivElement>) => {
-    // If clicking on resize handle or control buttons, don't drag
     if ((e.target as HTMLElement).closest("[data-resize-handle]")) return;
 
     e.stopPropagation();
@@ -445,7 +472,6 @@ export function DraggableVideoBubbles({
     dragInfoRef.current = null;
   };
 
-  // Resize Handle Handlers
   const handleResizeDown = (id: string, e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
     try {
@@ -464,7 +490,6 @@ export function DraggableVideoBubbles({
     const { id, startX, origWidth } = resizeInfoRef.current;
     const dx = e.clientX - startX;
 
-    // Constrain width between 110px and 420px
     const newWidth = Math.max(110, Math.min(420, origWidth + dx));
     setSizes((prev) => ({
       ...prev,
@@ -489,6 +514,11 @@ export function DraggableVideoBubbles({
 
   return (
     <>
+      {/* Guaranteed Remote Audio Elements for all active remote peer streams */}
+      {peerStreams.map((ps) => (
+        <RemotePeerAudio key={ps.userId} stream={ps.stream} />
+      ))}
+
       {/* Floating Toolbar to reset or collapse video bubbles */}
       <div className="fixed top-14 right-4 z-50 flex items-center gap-1.5 p-1 rounded-full bg-card/85 backdrop-blur-md border border-border shadow-lg">
         <button

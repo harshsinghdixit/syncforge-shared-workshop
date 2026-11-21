@@ -29,6 +29,11 @@ import {
   UserX,
   Volume2,
   VolumeX,
+  Video,
+  VideoOff,
+  Flag,
+  AlertTriangle,
+  Users,
   X,
 } from "lucide-react";
 
@@ -47,7 +52,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { useYjsCollaboration, USER_COLORS, type RemoteUser } from "./use-yjs-collaboration";
+import {
+  useYjsCollaboration,
+  USER_COLORS,
+  type RemoteUser,
+  type ModerationReport,
+} from "./use-yjs-collaboration";
 import { CodeMirrorEditor } from "./codemirror-editor";
 import { GitHubModal } from "./github-modal";
 import { WaitingRoomModal, HostRequestBanner } from "./waiting-room";
@@ -154,11 +164,19 @@ function UserProfilePopover({
   activeUsers,
   isHost,
   onUpdateUser,
+  onMuteAllPeers,
+  onBlockAllPeerCameras,
+  onUnmuteAndAllowAll,
+  onTransferHost,
 }: {
   localUser: RemoteUser;
   activeUsers: RemoteUser[];
   isHost: boolean;
   onUpdateUser: (updates: { name?: string; color?: string; colorLight?: string }) => void;
+  onMuteAllPeers?: () => void;
+  onBlockAllPeerCameras?: () => void;
+  onUnmuteAndAllowAll?: () => void;
+  onTransferHost?: (userId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [nameInput, setNameInput] = useState(localUser.name);
@@ -180,6 +198,9 @@ function UserProfilePopover({
     }
   };
 
+  const isHostSelf = Boolean(isHost);
+  const otherPeers = activeUsers.filter((u) => u.id !== localUser.id);
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -190,7 +211,7 @@ function UserProfilePopover({
             backgroundColor: `${localUser.color}18`,
             borderColor: `${localUser.color}60`,
           }}
-          title={`${localUser.name} (You) — Click to customize identity`}
+          title={`${localUser.name} (You) — Click to customize identity${isHostSelf ? " & Host Powers" : ""}`}
         >
           <span
             className="size-2 rounded-full animate-pulse shrink-0"
@@ -199,7 +220,7 @@ function UserProfilePopover({
           <span className="font-bold text-[11px] truncate max-w-[90px]" style={{ color: localUser.color }}>
             {localUser.name}
           </span>
-          {isHost && (
+          {isHostSelf && (
             <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
               👑 HOST
             </span>
@@ -209,7 +230,77 @@ function UserProfilePopover({
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-3 bg-card/95 backdrop-blur-md border-border shadow-xl space-y-3 z-50">
+      <PopoverContent className="w-72 p-3 bg-card/95 backdrop-blur-md border-border shadow-xl space-y-3 z-50">
+        {/* Host Quick Powers (When Host clicks their own chip) */}
+        {isHostSelf && (
+          <div className="space-y-2 pb-2 border-b border-border/70">
+            <div className="flex items-center gap-1.5 text-xs font-extrabold text-amber-400">
+              <Crown className="size-3.5" />
+              <span>Host Powers</span>
+            </div>
+
+            {/* Room Quick Controls */}
+            <div className="grid grid-cols-3 gap-1 pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onMuteAllPeers}
+                className="h-7 text-[10px] px-1.5 gap-1 border-border/80 hover:bg-amber-500/10 cursor-pointer"
+                title="Mute all other peers in the room"
+              >
+                <VolumeX className="size-3 text-amber-400" />
+                <span>Mute All</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onBlockAllPeerCameras}
+                className="h-7 text-[10px] px-1.5 gap-1 border-border/80 hover:bg-amber-500/10 cursor-pointer"
+                title="Turn off all peer cameras"
+              >
+                <VideoOff className="size-3 text-rose-400" />
+                <span>Cams Off</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onUnmuteAndAllowAll}
+                className="h-7 text-[10px] px-1.5 gap-1 border-border/80 hover:bg-emerald-500/10 cursor-pointer"
+                title="Unmute all and allow peer cameras"
+              >
+                <Volume2 className="size-3 text-emerald-400" />
+                <span>Allow All</span>
+              </Button>
+            </div>
+
+            {/* Transfer Host Ownership Dropdown */}
+            {otherPeers.length > 0 && (
+              <div className="space-y-1 pt-1">
+                <span className="text-[10px] font-medium text-muted-foreground block">
+                  Transfer Host Ownership
+                </span>
+                <select
+                  className="w-full h-7 px-2 text-[11px] rounded bg-background border border-input text-foreground focus:outline-hidden"
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      onTransferHost?.(e.target.value);
+                      setOpen(false);
+                    }
+                  }}
+                  defaultValue=""
+                >
+                  <option value="" disabled>Select peer to transfer...</option>
+                  {otherPeers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="space-y-1">
           <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
             Player Profile
@@ -297,10 +388,13 @@ function UserActionsMenu({
   isMemberHost,
   isMemberSubLeader,
   isMemberMuted,
+  isMemberCamBlocked,
   onKick,
   onToggleMute,
+  onToggleCamBlock,
   onToggleSubLeader,
   onTransferHost,
+  onSubmitReport,
 }: {
   member: RemoteUser;
   isHost: boolean;
@@ -308,15 +402,27 @@ function UserActionsMenu({
   isMemberHost: boolean;
   isMemberSubLeader: boolean;
   isMemberMuted: boolean;
+  isMemberCamBlocked: boolean;
   onKick: () => void;
   onToggleMute: () => void;
+  onToggleCamBlock: () => void;
   onToggleSubLeader: () => void;
   onTransferHost: () => void;
+  onSubmitReport: (reason: string, note?: string) => void;
 }) {
   const canModerate = isHost || (isSubLeader && !isMemberHost);
+  const [reportMode, setReportMode] = useState(false);
+  const [reportReason, setReportReason] = useState<string>("Disruptive Audio/Cam");
+  const [reportNote, setReportNote] = useState("");
+
+  const handleSendReport = () => {
+    onSubmitReport(reportReason, reportNote.trim());
+    setReportMode(false);
+    setReportNote("");
+  };
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => { if (!open) setReportMode(false); }}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -348,9 +454,14 @@ function UserActionsMenu({
               <VolumeX className="size-3 text-destructive shrink-0" />
             </span>
           )}
+          {isMemberCamBlocked && (
+            <span title="Camera disabled by moderator">
+              <VideoOff className="size-3 text-destructive shrink-0" />
+            </span>
+          )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48 bg-card border border-border shadow-xl rounded-xl p-1 z-50">
+      <DropdownMenuContent align="end" className="w-56 bg-card border border-border shadow-xl rounded-xl p-1 z-50">
         <div className="px-2 py-1.5 text-xs">
           <div className="font-bold text-foreground truncate" style={{ color: member.color }}>
             {member.name}
@@ -361,68 +472,144 @@ function UserActionsMenu({
         </div>
         <DropdownMenuSeparator />
 
-        {canModerate ? (
+        {reportMode ? (
+          <div className="p-2 space-y-2 text-xs">
+            <span className="font-semibold text-foreground flex items-center gap-1 text-[11px]">
+              <Flag className="size-3 text-amber-400" />
+              <span>Report {member.name}</span>
+            </span>
+            <div className="space-y-1">
+              {["Disruptive Audio/Cam", "Spamming / Griefing", "Inappropriate Behaviour"].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setReportReason(r)}
+                  className={`w-full text-left px-2 py-1 rounded text-[11px] cursor-pointer transition-colors ${
+                    reportReason === r
+                      ? "bg-primary text-primary-foreground font-semibold"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <Input
+              value={reportNote}
+              onChange={(e) => setReportNote(e.target.value)}
+              placeholder="Optional short note..."
+              className="h-7 text-[11px] bg-background"
+            />
+            <div className="flex items-center gap-1.5 pt-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setReportMode(false)}
+                className="h-7 flex-1 text-[11px] cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSendReport}
+                className="h-7 flex-1 text-[11px] bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
+              >
+                Send Report
+              </Button>
+            </div>
+          </div>
+        ) : (
           <>
-            <DropdownMenuItem
-              onClick={onToggleMute}
-              className="gap-2 text-xs cursor-pointer"
-            >
-              {isMemberMuted ? (
-                <>
-                  <Volume2 className="size-3.5 text-emerald-400" />
-                  <span>Unmute User</span>
-                </>
-              ) : (
-                <>
-                  <VolumeX className="size-3.5 text-amber-400" />
-                  <span>Mute User</span>
-                </>
-              )}
-            </DropdownMenuItem>
-
-            {isHost && (
+            {canModerate && (
               <>
                 <DropdownMenuItem
-                  onClick={onToggleSubLeader}
+                  onClick={onToggleMute}
                   className="gap-2 text-xs cursor-pointer"
                 >
-                  {isMemberSubLeader ? (
+                  {isMemberMuted ? (
                     <>
-                      <UserMinus className="size-3.5 text-sky-400" />
-                      <span>Remove Sub-Leader</span>
+                      <Volume2 className="size-3.5 text-emerald-400" />
+                      <span>Unmute Mic</span>
                     </>
                   ) : (
                     <>
-                      <Shield className="size-3.5 text-sky-400" />
-                      <span>Make Sub-Leader</span>
+                      <VolumeX className="size-3.5 text-amber-400" />
+                      <span>Mute Mic</span>
                     </>
                   )}
                 </DropdownMenuItem>
 
                 <DropdownMenuItem
-                  onClick={onTransferHost}
-                  className="gap-2 text-xs text-amber-400 cursor-pointer"
+                  onClick={onToggleCamBlock}
+                  className="gap-2 text-xs cursor-pointer"
                 >
-                  <Crown className="size-3.5" />
-                  <span>Transfer Host</span>
+                  {isMemberCamBlocked ? (
+                    <>
+                      <Video className="size-3.5 text-emerald-400" />
+                      <span>Allow Camera</span>
+                    </>
+                  ) : (
+                    <>
+                      <VideoOff className="size-3.5 text-amber-400" />
+                      <span>Turn Off Cam</span>
+                    </>
+                  )}
+                </DropdownMenuItem>
+
+                {isHost && (
+                  <>
+                    <DropdownMenuItem
+                      onClick={onToggleSubLeader}
+                      className="gap-2 text-xs cursor-pointer"
+                    >
+                      {isMemberSubLeader ? (
+                        <>
+                          <UserMinus className="size-3.5 text-sky-400" />
+                          <span>Remove MOD</span>
+                        </>
+                      ) : (
+                        <>
+                          <Shield className="size-3.5 text-sky-400" />
+                          <span>Make Sub-Leader (MOD)</span>
+                        </>
+                      )}
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem
+                      onClick={onTransferHost}
+                      className="gap-2 text-xs text-amber-400 cursor-pointer"
+                    >
+                      <Crown className="size-3.5" />
+                      <span>Transfer Host</span>
+                    </DropdownMenuItem>
+                  </>
+                )}
+
+                <DropdownMenuSeparator />
+
+                <DropdownMenuItem
+                  onClick={onKick}
+                  className="gap-2 text-xs text-destructive hover:bg-destructive/10 cursor-pointer"
+                >
+                  <UserX className="size-3.5" />
+                  <span>Kick User</span>
                 </DropdownMenuItem>
               </>
             )}
 
-            <DropdownMenuSeparator />
-
-            <DropdownMenuItem
-              onClick={onKick}
-              className="gap-2 text-xs text-destructive hover:bg-destructive/10 cursor-pointer"
-            >
-              <UserX className="size-3.5" />
-              <span>Kick from Room</span>
-            </DropdownMenuItem>
+            {!isMemberHost && (
+              <>
+                {canModerate && <DropdownMenuSeparator />}
+                <DropdownMenuItem
+                  onClick={() => setReportMode(true)}
+                  className="gap-2 text-xs text-amber-400 cursor-pointer"
+                >
+                  <Flag className="size-3.5" />
+                  <span>Report User to Host</span>
+                </DropdownMenuItem>
+              </>
+            )}
           </>
-        ) : (
-          <div className="px-2 py-1 text-[11px] text-muted-foreground italic">
-            Only Host or Sub-Leaders can moderate.
-          </div>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -439,6 +626,7 @@ function TopBar({
   hostId,
   subLeaderIds,
   mutedIds,
+  camBlockedIds,
   viewMode,
   onViewModeChange,
   onOpenGitHub,
@@ -448,8 +636,15 @@ function TopBar({
   unreadChat,
   onKickUser,
   onToggleMute,
+  onToggleCamBlock,
   onToggleSubLeader,
   onTransferHost,
+  onMuteAllPeers,
+  onBlockAllPeerCameras,
+  onUnmuteAndAllowAll,
+  reports,
+  onSubmitReport,
+  onResolveReport,
 }: {
   roomId: string;
   setRoomId: (roomId: string) => void;
@@ -460,6 +655,7 @@ function TopBar({
   hostId: string | null;
   subLeaderIds: string[];
   mutedIds: string[];
+  camBlockedIds: string[];
   viewMode: "code" | "whiteboard";
   onViewModeChange: (mode: "code" | "whiteboard") => void;
   onOpenGitHub: () => void;
@@ -469,11 +665,19 @@ function TopBar({
   unreadChat: boolean;
   onKickUser: (userId: string) => void;
   onToggleMute: (userId: string) => void;
+  onToggleCamBlock: (userId: string) => void;
   onToggleSubLeader: (userId: string) => void;
   onTransferHost: (userId: string) => void;
+  onMuteAllPeers: () => void;
+  onBlockAllPeerCameras: () => void;
+  onUnmuteAndAllowAll: () => void;
+  reports: ModerationReport[];
+  onSubmitReport: (targetId: string, targetName: string, reason: string, note?: string) => void;
+  onResolveReport: (reportId: string, action?: "mute" | "camOff" | "kick" | "dismiss") => void;
 }) {
   const isMeHost = hostId === localUser.id;
   const isMeSubLeader = subLeaderIds.includes(localUser.id);
+  const pendingReports = reports.filter((r) => r.status === "pending");
 
   return (
     <header className="topbar">
@@ -553,6 +757,109 @@ function TopBar({
           )}
         </Button>
 
+        {/* Admin Reports Queue Popover (Host & Sub-Leaders only) */}
+        {(isMeHost || isMeSubLeader) && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant={pendingReports.length > 0 ? "default" : "outline"}
+                size="sm"
+                className={`relative h-8 gap-1.5 text-xs border-border cursor-pointer ${
+                  pendingReports.length > 0
+                    ? "bg-amber-600 hover:bg-amber-700 text-white font-bold animate-pulse"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title="Admin Reports & Requests"
+              >
+                <ShieldAlert className="size-3.5" />
+                <span className="hidden sm:inline">Reports</span>
+                {pendingReports.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-extrabold ring-1 ring-white/50">
+                    {pendingReports.length}
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 p-3 bg-card border-border shadow-2xl rounded-xl z-50 space-y-2.5">
+              <div className="flex items-center justify-between pb-1 border-b border-border">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <ShieldAlert className="size-3.5 text-amber-500" />
+                  <span>Admin Request Queue</span>
+                </span>
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {pendingReports.length} pending
+                </span>
+              </div>
+
+              {pendingReports.length === 0 ? (
+                <div className="py-4 text-center text-xs text-muted-foreground italic">
+                  No pending user reports
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {pendingReports.map((rep) => (
+                    <div
+                      key={rep.id}
+                      className="p-2.5 rounded-lg bg-muted/40 border border-border/80 space-y-1.5 text-xs"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-foreground">
+                          {rep.reporterName} reported <span className="text-amber-400">@{rep.targetName}</span>
+                        </span>
+                        <span className="text-[9px] text-muted-foreground">
+                          {new Date(rep.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        <span className="font-semibold text-foreground">Reason:</span> {rep.reason}
+                        {rep.note && <span className="block italic text-[10px] pt-0.5">&ldquo;{rep.note}&rdquo;</span>}
+                      </div>
+                      <div className="grid grid-cols-4 gap-1 pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onResolveReport(rep.id, "mute")}
+                          className="h-6 text-[10px] px-1 hover:bg-amber-500/10 hover:text-amber-400 cursor-pointer"
+                          title="Mute Mic"
+                        >
+                          Mute
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onResolveReport(rep.id, "camOff")}
+                          className="h-6 text-[10px] px-1 hover:bg-rose-500/10 hover:text-rose-400 cursor-pointer"
+                          title="Turn Off Camera"
+                        >
+                          Cam Off
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onResolveReport(rep.id, "kick")}
+                          className="h-6 text-[10px] px-1 hover:bg-destructive/15 text-destructive cursor-pointer"
+                          title="Kick User"
+                        >
+                          Kick
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onResolveReport(rep.id, "dismiss")}
+                          className="h-6 text-[10px] px-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                          title="Dismiss Report"
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        )}
+
         <Button
           variant="outline"
           size="sm"
@@ -578,6 +885,7 @@ function TopBar({
             const isMemberHost = member.id === hostId;
             const isMemberSubLeader = subLeaderIds.includes(member.id);
             const isMemberMuted = mutedIds.includes(member.id);
+            const isMemberCamBlocked = camBlockedIds.includes(member.id);
             const isMe = member.id === localUser.id;
 
             if (isMe) {
@@ -588,6 +896,10 @@ function TopBar({
                   activeUsers={activeUsers}
                   isHost={isMemberHost}
                   onUpdateUser={onUpdateUser}
+                  onMuteAllPeers={onMuteAllPeers}
+                  onBlockAllPeerCameras={onBlockAllPeerCameras}
+                  onUnmuteAndAllowAll={onUnmuteAndAllowAll}
+                  onTransferHost={onTransferHost}
                 />
               );
             }
@@ -601,10 +913,13 @@ function TopBar({
                 isMemberHost={isMemberHost}
                 isMemberSubLeader={isMemberSubLeader}
                 isMemberMuted={isMemberMuted}
+                isMemberCamBlocked={isMemberCamBlocked}
                 onKick={() => onKickUser(member.id)}
                 onToggleMute={() => onToggleMute(member.id)}
+                onToggleCamBlock={() => onToggleCamBlock(member.id)}
                 onToggleSubLeader={() => onToggleSubLeader(member.id)}
                 onTransferHost={() => onTransferHost(member.id)}
+                onSubmitReport={(reason, note) => onSubmitReport(member.id, member.name, reason, note)}
               />
             );
           })}
@@ -1091,13 +1406,23 @@ function ActiveRoomWorkspace({
     declineJoinRequest,
     subLeaderIds,
     mutedIds,
+    camBlockedIds,
     wasKicked,
     isMuted,
+    isCamBlocked,
     kickUser,
     muteUser,
     unmuteUser,
+    blockCamera,
+    unblockCamera,
+    muteAllPeers,
+    blockAllPeerCameras,
+    unmuteAndAllowAll,
     setSubLeader,
     transferHost,
+    reports,
+    submitReport,
+    resolveReport,
     reactions,
     sendReaction,
   } = useYjsCollaboration(roomId);
@@ -1120,6 +1445,7 @@ function ActiveRoomWorkspace({
     localUser,
     activeUsers,
     isMutedByHost: isMuted,
+    isCamBlockedByHost: isCamBlocked,
   });
 
   // If local user was kicked, invoke kick handler immediately
@@ -1300,6 +1626,7 @@ function ActiveRoomWorkspace({
         hostId={hostId}
         subLeaderIds={subLeaderIds}
         mutedIds={mutedIds}
+        camBlockedIds={camBlockedIds}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         onOpenGitHub={() => setGithubModalOpen(true)}
@@ -1312,10 +1639,20 @@ function ActiveRoomWorkspace({
           if (mutedIds.includes(id)) unmuteUser(id);
           else muteUser(id);
         }}
+        onToggleCamBlock={(id) => {
+          if (camBlockedIds.includes(id)) unblockCamera(id);
+          else blockCamera(id);
+        }}
         onToggleSubLeader={(id) => {
           setSubLeader(id, !subLeaderIds.includes(id));
         }}
         onTransferHost={transferHost}
+        onMuteAllPeers={muteAllPeers}
+        onBlockAllPeerCameras={blockAllPeerCameras}
+        onUnmuteAndAllowAll={unmuteAndAllowAll}
+        reports={reports}
+        onSubmitReport={submitReport}
+        onResolveReport={resolveReport}
       />
 
       {viewMode === "code" ? (
@@ -1418,6 +1755,7 @@ function ActiveRoomWorkspace({
         isPushToTalkActive={isPushToTalkActive}
         cleanBg={cleanBg}
         isMutedByHost={isMuted}
+        isCamBlockedByHost={isCamBlocked}
         micLevel={localMicLevel}
         onToggleMic={toggleMic}
         onToggleCamera={toggleCamera}

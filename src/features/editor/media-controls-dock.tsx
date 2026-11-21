@@ -18,6 +18,7 @@ interface MediaControlsDockProps {
   isPushToTalkActive: boolean;
   cleanBg: boolean;
   isMutedByHost: boolean;
+  isCamBlockedByHost?: boolean;
   micLevel: number; // 0 - 100
   onToggleMic: () => void;
   onToggleCamera: () => void;
@@ -31,6 +32,7 @@ export function MediaControlsDock({
   isPushToTalkActive,
   cleanBg,
   isMutedByHost,
+  isCamBlockedByHost = false,
   micLevel = 0,
   onToggleMic,
   onToggleCamera,
@@ -129,15 +131,27 @@ export function MediaControlsDock({
         {/* Camera Button */}
         <button
           type="button"
+          disabled={isCamBlockedByHost}
           onClick={onToggleCamera}
-          className={`size-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-            isCameraOn
+          className={`relative size-9 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+            isCamBlockedByHost
+              ? "bg-destructive/15 text-destructive/50 border border-destructive/30 cursor-not-allowed"
+              : isCameraOn
               ? "bg-primary text-primary-foreground shadow-md hover:scale-105"
               : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
           }`}
-          title={isCameraOn ? "Turn Off Camera" : "Turn On Camera"}
+          title={
+            isCamBlockedByHost
+              ? "Cam Disabled by Host"
+              : isCameraOn
+              ? "Turn Off Camera"
+              : "Turn On Camera"
+          }
         >
           {isCameraOn ? <Video className="size-4" /> : <VideoOff className="size-4" />}
+          {isCamBlockedByHost && (
+            <span className="absolute -top-1 -right-1 size-2 rounded-full bg-destructive" />
+          )}
         </button>
 
         <div className="h-4 w-px bg-border/80 mx-0.5" />
@@ -182,6 +196,14 @@ export function MediaControlsDock({
           <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-destructive/15 border border-destructive/30 text-destructive text-[10px] font-bold">
             <VolumeX className="size-3" />
             <span>Muted by Host</span>
+          </div>
+        )}
+
+        {/* Host Cam Disabled Notification Pill */}
+        {isCamBlockedByHost && (
+          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-destructive/15 border border-destructive/30 text-destructive text-[10px] font-bold">
+            <VideoOff className="size-3" />
+            <span>Cam Disabled by Host</span>
           </div>
         )}
       </div>

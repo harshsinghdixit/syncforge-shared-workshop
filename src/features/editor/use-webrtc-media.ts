@@ -22,13 +22,22 @@ interface UseWebRTCMediaOptions {
   localUser: RemoteUser;
   activeUsers: RemoteUser[];
   isMutedByHost?: boolean;
+  isCamBlockedByHost?: boolean;
 }
+
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun.cloudflare.com:3478" },
+];
 
 export function useWebRTCMedia({
   ydoc,
   localUser,
   activeUsers,
   isMutedByHost = false,
+  isCamBlockedByHost = false,
 }: UseWebRTCMediaOptions) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isMicOn, setIsMicOn] = useState(false);
@@ -43,8 +52,22 @@ export function useWebRTCMedia({
   const localStreamRef = useRef<MediaStream | null>(null);
   const micTrackRef = useRef<MediaStreamTrack | null>(null);
   const camTrackRef = useRef<MediaStreamTrack | null>(null);
-  const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+
+  // Per-peer connection management and perfect negotiation flags
+  const peersRef = useRef<
+    Map<
+      string,
+      {
+        pc: RTCPeerConnection;
+        makingOffer: boolean;
+        ignoreOffer: boolean;
+        isSettingRemoteAnswerPending: boolean;
+      }
+    >
+  >(new Map());
+
   const processedSignalsRef = useRef<Set<string>>(new Set());
+  const signalSeqRef = useRef<number>(0);
 
   // Web Audio analyser for local mic meter & remote speaking detectors
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -52,17 +75,13 @@ export function useWebRTCMedia({
   const localAnimFrameRef = useRef<number | null>(null);
   const analysersRef = useRef<Map<string, { analyser: AnalyserNode; animId: number }>>(new Map());
 
-  // WebRTC ICE configuration with Google STUN
-  const rtcConfig: RTCConfiguration = {
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  };
-
-  // Helper to safely send signals over Yjs Map
+  // Helper to safely send signals over Yjs Map with unique non-colliding keys
   const sendSignal = useCallback(
     (to: string, type: "offer" | "answer" | "candidate", payload: any) => {
       if (!ydoc) return;
       const signalsMap = ydoc.getMap<RTCSignalMessage>("rtc-signals");
-      const signalId = `${localUser.id}_${to}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const seq = ++signalSeqRef.current;
+      const signalId = `${localUser.id}:${to}:${Date.now()}:${seq}`;
       const msg: RTCSignalMessage = {
         id: signalId,
         from: localUser.id,
@@ -146,69 +165,73 @@ export function useWebRTCMedia({
   }, []);
 
   // Monitor local mic volume level (0 - 100)
-  const startLocalAudioAnalysis = useCallback((track: MediaStreamTrack) => {
-    if (typeof window === "undefined") return;
-    try {
-      if (!audioContextRef.current || audioContextRef.current.state === "closed") {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioContextClass) {
-          audioContextRef.current = new AudioContextClass();
-        }
-      }
-      const ctx = audioContextRef.current;
-      if (!ctx) return;
-      if (ctx.state === "suspended") {
-        ctx.resume().catch(() => {});
-      }
+  const startLocalAudioAnalysis = useCallback(
+    (track: MediaStreamTrack) => {
+      if (typeof window === "undefined") return;
 
-      const singleStream = new MediaStream([track]);
-      const source = ctx.createMediaStreamSource(singleStream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 128;
-      source.connect(analyser);
-      localAnalyserRef.current = analyser;
-
-      const buffer = new Uint8Array(analyser.frequencyBinCount);
-      const readLevel = () => {
-        if (!track.enabled || track.readyState !== "live") {
-          setLocalMicLevel(0);
-          return;
-        }
-        analyser.getByteFrequencyData(buffer);
-        let sum = 0;
-        for (let i = 0; i < buffer.length; i++) {
-          sum += buffer[i] ?? 0;
-        }
-        const avg = sum / buffer.length;
-        const normalized = Math.min(100, Math.round((avg / 128) * 100));
-        setLocalMicLevel(normalized);
-
-        const isSpeaking = normalized > 12;
-        setSpeakingUserIds((prev) => {
-          const has = prev.has(localUser.id);
-          if (isSpeaking && !has) {
-            const next = new Set(prev);
-            next.add(localUser.id);
-            return next;
-          } else if (!isSpeaking && has) {
-            const next = new Set(prev);
-            next.delete(localUser.id);
-            return next;
+      try {
+        if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioContextClass) {
+            audioContextRef.current = new AudioContextClass();
           }
-          return prev;
-        });
+        }
+        const ctx = audioContextRef.current;
+        if (!ctx) return;
+        if (ctx.state === "suspended") {
+          ctx.resume().catch(() => {});
+        }
 
-        localAnimFrameRef.current = window.requestAnimationFrame(readLevel);
-      };
+        const singleStream = new MediaStream([track]);
+        const source = ctx.createMediaStreamSource(singleStream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 128;
+        source.connect(analyser);
+        localAnalyserRef.current = analyser;
 
-      readLevel();
-    } catch (e) {
-      console.warn("Unable to start local audio analyser:", e);
-    }
-  }, [localUser.id]);
+        const buffer = new Uint8Array(analyser.frequencyBinCount);
+        const readLevel = () => {
+          if (!track.enabled || track.readyState !== "live") {
+            setLocalMicLevel(0);
+            return;
+          }
+          analyser.getByteFrequencyData(buffer);
+          let sum = 0;
+          for (let i = 0; i < buffer.length; i++) {
+            sum += buffer[i] ?? 0;
+          }
+          const avg = sum / buffer.length;
+          const normalized = Math.min(100, Math.round((avg / 128) * 100));
+          setLocalMicLevel(normalized);
 
-  // Synchronize composite stream with localStream state
-  const syncLocalStream = useCallback(() => {
+          const isSpeaking = normalized > 12;
+          setSpeakingUserIds((prev) => {
+            const has = prev.has(localUser.id);
+            if (isSpeaking && !has) {
+              const next = new Set(prev);
+              next.add(localUser.id);
+              return next;
+            } else if (!isSpeaking && has) {
+              const next = new Set(prev);
+              next.delete(localUser.id);
+              return next;
+            }
+            return prev;
+          });
+
+          localAnimFrameRef.current = window.requestAnimationFrame(readLevel);
+        };
+
+        readLevel();
+      } catch (e) {
+        console.warn("Unable to start local audio analyser:", e);
+      }
+    },
+    [localUser.id]
+  );
+
+  // Sync active local tracks to composite local stream and renegotiate on all peer connections
+  const syncLocalStreamAndRenegotiate = useCallback(() => {
     const tracks: MediaStreamTrack[] = [];
     if (micTrackRef.current && micTrackRef.current.readyState === "live") {
       tracks.push(micTrackRef.current);
@@ -221,66 +244,137 @@ export function useWebRTCMedia({
       const stream = new MediaStream(tracks);
       localStreamRef.current = stream;
       setLocalStream(stream);
-
-      // Add/replace tracks on all peers
-      peersRef.current.forEach((pc) => {
-        const senders = pc.getSenders();
-        tracks.forEach((track) => {
-          const sender = senders.find((s) => s.track?.kind === track.kind);
-          if (sender) {
-            sender.replaceTrack(track).catch(() => {});
-          } else {
-            pc.addTrack(track, stream);
-          }
-        });
-      });
     } else {
       localStreamRef.current = null;
       setLocalStream(null);
     }
+
+    // Attach, replace, or remove tracks on all peer connections
+    peersRef.current.forEach(({ pc }) => {
+      const currentSenders = pc.getSenders();
+
+      // Check audio track
+      const audioSender = currentSenders.find((s) => s.track?.kind === "audio");
+      if (micTrackRef.current && micTrackRef.current.readyState === "live") {
+        if (audioSender) {
+          audioSender.replaceTrack(micTrackRef.current).catch(() => {});
+        } else if (localStreamRef.current) {
+          try {
+            pc.addTrack(micTrackRef.current, localStreamRef.current);
+          } catch {}
+        }
+      } else if (audioSender && audioSender.track) {
+        try {
+          pc.removeTrack(audioSender);
+        } catch {}
+      }
+
+      // Check video track
+      const videoSender = currentSenders.find((s) => s.track?.kind === "video");
+      if (camTrackRef.current && camTrackRef.current.readyState === "live") {
+        if (videoSender) {
+          videoSender.replaceTrack(camTrackRef.current).catch(() => {});
+        } else if (localStreamRef.current) {
+          try {
+            pc.addTrack(camTrackRef.current, localStreamRef.current);
+          } catch {}
+        }
+      } else if (videoSender && videoSender.track) {
+        try {
+          pc.removeTrack(videoSender);
+        } catch {}
+      }
+    });
   }, []);
 
-  // Initialize or update RTCPeerConnection for a remote peer
+  // Update remote streams state from a PC's received tracks
+  const updateRemotePeerStream = useCallback(
+    (peerId: string, pc: RTCPeerConnection) => {
+      const receivers = pc.getReceivers();
+      const liveTracks = receivers
+        .map((r) => r.track)
+        .filter((t): t is MediaStreamTrack => Boolean(t) && t.readyState === "live");
+
+      if (liveTracks.length > 0) {
+        const stream = new MediaStream(liveTracks);
+        setPeerStreams((prev) => {
+          const filtered = prev.filter((p) => p.userId !== peerId);
+          return [...filtered, { userId: peerId, stream }];
+        });
+        monitorRemoteSpeaking(peerId, stream);
+      } else {
+        setPeerStreams((prev) => prev.filter((p) => p.userId !== peerId));
+      }
+    },
+    [monitorRemoteSpeaking]
+  );
+
+  // Initialize or get RTCPeerConnection with Perfect Negotiation per peer
   const getOrCreatePeer = useCallback(
     (peerId: string) => {
-      let pc = peersRef.current.get(peerId);
-      if (pc) return pc;
+      let entry = peersRef.current.get(peerId);
+      if (entry) return entry.pc;
 
       if (typeof window === "undefined" || !window.RTCPeerConnection) return null;
 
-      pc = new RTCPeerConnection(rtcConfig);
-      peersRef.current.set(peerId, pc);
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      // Polite peer is deterministic: the one with alphabetically smaller ID
+      const isPolite = localUser.id < peerId;
 
-      // Add current local tracks to new peer connection
+      const peerState = {
+        pc,
+        makingOffer: false,
+        ignoreOffer: false,
+        isSettingRemoteAnswerPending: false,
+      };
+      peersRef.current.set(peerId, peerState);
+
+      // Add current active local tracks to new peer connection
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => {
-          if (localStreamRef.current && pc) {
-            pc.addTrack(track, localStreamRef.current);
+          if (localStreamRef.current) {
+            try {
+              pc.addTrack(track, localStreamRef.current);
+            } catch {}
           }
         });
       }
 
       // ICE candidate handler
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          sendSignal(peerId, "candidate", event.candidate.toJSON());
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          sendSignal(peerId, "candidate", candidate.toJSON());
         }
       };
 
-      // Remote stream handler
-      pc.ontrack = (event) => {
-        const stream = event.streams[0];
-        if (stream) {
-          setPeerStreams((prev) => {
-            const filtered = prev.filter((p) => p.userId !== peerId);
-            return [...filtered, { userId: peerId, stream }];
-          });
-          monitorRemoteSpeaking(peerId, stream);
+      // Negotiation needed event (Perfect Negotiation)
+      pc.onnegotiationneeded = async () => {
+        try {
+          peerState.makingOffer = true;
+          await pc.setLocalDescription();
+          if (pc.localDescription) {
+            sendSignal(peerId, "offer", pc.localDescription);
+          }
+        } catch (err) {
+          console.error("Negotiation offer error for", peerId, err);
+        } finally {
+          peerState.makingOffer = false;
         }
+      };
+
+      // Remote track handler
+      pc.ontrack = (event) => {
+        updateRemotePeerStream(peerId, pc);
+        event.track.onunmute = () => updateRemotePeerStream(peerId, pc);
+        event.track.onended = () => updateRemotePeerStream(peerId, pc);
       };
 
       pc.onconnectionstatechange = () => {
-        if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed")) {
+        if (
+          pc.connectionState === "disconnected" ||
+          pc.connectionState === "failed" ||
+          pc.connectionState === "closed"
+        ) {
           setPeerStreams((prev) => prev.filter((p) => p.userId !== peerId));
           setSpeakingUserIds((prev) => {
             if (prev.has(peerId)) {
@@ -295,38 +389,20 @@ export function useWebRTCMedia({
 
       return pc;
     },
-    [sendSignal, monitorRemoteSpeaking]
+    [localUser.id, sendSignal, updateRemotePeerStream]
   );
 
-  // Call peers when active users change (deterministic offerer by higher ID)
+  // Sync peer connections with active users in the room
   useEffect(() => {
-    if (!localStream) return;
-
     activeUsers.forEach((user) => {
-      if (user.id === localUser.id) return;
-
-      if (localUser.id > user.id) {
-        const pc = getOrCreatePeer(user.id);
-        if (!pc) return;
-
-        if (pc.signalingState === "stable") {
-          pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
-            .then((offer) => pc.setLocalDescription(offer))
-            .then(() => {
-              if (pc.localDescription) {
-                sendSignal(user.id, "offer", pc.localDescription);
-              }
-            })
-            .catch(() => {});
-        }
+      if (user.id !== localUser.id) {
+        getOrCreatePeer(user.id);
       }
     });
-  }, [activeUsers, localUser.id, localStream, getOrCreatePeer, sendSignal]);
 
-  // Clean up departed peers
-  useEffect(() => {
+    // Clean up peers who left
     const activeIds = new Set(activeUsers.map((u) => u.id));
-    peersRef.current.forEach((pc, peerId) => {
+    peersRef.current.forEach(({ pc }, peerId) => {
       if (!activeIds.has(peerId)) {
         try {
           pc.close();
@@ -335,9 +411,9 @@ export function useWebRTCMedia({
         setPeerStreams((prev) => prev.filter((p) => p.userId !== peerId));
       }
     });
-  }, [activeUsers]);
+  }, [activeUsers, localUser.id, getOrCreatePeer]);
 
-  // Listen to Yjs Map signals
+  // Listen to Yjs Map signals with Perfect Negotiation
   useEffect(() => {
     if (!ydoc) return;
     const signalsMap = ydoc.getMap<RTCSignalMessage>("rtc-signals");
@@ -348,8 +424,8 @@ export function useWebRTCMedia({
           return;
         }
 
-        // Clean up signals older than 25 seconds
-        if (Date.now() - signal.timestamp > 25000) {
+        // Clean up stale signals older than 30 seconds
+        if (Date.now() - signal.timestamp > 30000) {
           try {
             signalsMap.delete(key);
           } catch {}
@@ -358,11 +434,27 @@ export function useWebRTCMedia({
 
         processedSignalsRef.current.add(signal.id);
         const { from, type, payload } = signal;
-        const pc = getOrCreatePeer(from);
-        if (!pc) return;
+
+        let peerState = peersRef.current.get(from);
+        if (!peerState) {
+          getOrCreatePeer(from);
+          peerState = peersRef.current.get(from);
+        }
+        if (!peerState) return;
+
+        const { pc } = peerState;
+        const isPolite = localUser.id < from;
 
         try {
           if (type === "offer") {
+            const offerCollision =
+              peerState.makingOffer || pc.signalingState !== "stable";
+            peerState.ignoreOffer = !isPolite && offerCollision;
+
+            if (peerState.ignoreOffer) {
+              return;
+            }
+
             await pc.setRemoteDescription(new RTCSessionDescription(payload));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
@@ -372,12 +464,16 @@ export function useWebRTCMedia({
               await pc.setRemoteDescription(new RTCSessionDescription(payload));
             }
           } else if (type === "candidate") {
-            if (pc.remoteDescription) {
+            try {
               await pc.addIceCandidate(new RTCIceCandidate(payload));
+            } catch (err) {
+              if (!peerState.ignoreOffer) {
+                console.warn("Error adding ICE candidate:", err);
+              }
             }
           }
-        } catch {
-          // Handled gracefully
+        } catch (err) {
+          console.warn("Signaling process error:", err);
         }
       });
     };
@@ -414,14 +510,13 @@ export function useWebRTCMedia({
             micTrackRef.current.enabled = true;
           }
           setIsMicOn(true);
-          syncLocalStream();
+          syncLocalStreamAndRenegotiate();
         } catch (err: any) {
           console.warn("Unable to access microphone:", err);
           toast.error("Microphone access failed. Check permissions.");
           setIsMicOn(false);
         }
       } else {
-        // Mute mic track (keep ready or stop)
         if (micTrackRef.current) {
           micTrackRef.current.enabled = false;
         }
@@ -435,9 +530,10 @@ export function useWebRTCMedia({
           }
           return prev;
         });
+        syncLocalStreamAndRenegotiate();
       }
     },
-    [isMutedByHost, localUser.id, startLocalAudioAnalysis, syncLocalStream]
+    [isMutedByHost, localUser.id, startLocalAudioAnalysis, syncLocalStreamAndRenegotiate]
   );
 
   // Turn Camera ON or OFF independently
@@ -446,6 +542,11 @@ export function useWebRTCMedia({
       if (typeof window === "undefined" || !navigator?.mediaDevices) return;
 
       if (active) {
+        if (isCamBlockedByHost) {
+          toast.error("Camera is disabled by the room host");
+          return;
+        }
+
         try {
           if (!camTrackRef.current || camTrackRef.current.readyState !== "live") {
             const videoStream = await navigator.mediaDevices.getUserMedia({
@@ -460,33 +561,40 @@ export function useWebRTCMedia({
             camTrackRef.current.enabled = true;
           }
           setIsCameraOn(true);
-          syncLocalStream();
+          syncLocalStreamAndRenegotiate();
         } catch (err: any) {
           console.warn("Unable to access camera:", err);
           toast.error("Camera access failed. Check permissions or device in use.");
           setIsCameraOn(false);
         }
       } else {
-        // Explicitly stop camera track to turn off camera hardware LED cleanly
+        // Explicitly stop camera track to release device hardware
         if (camTrackRef.current) {
           camTrackRef.current.stop();
           camTrackRef.current = null;
         }
         setIsCameraOn(false);
-        syncLocalStream();
+        syncLocalStreamAndRenegotiate();
       }
     },
-    [syncLocalStream]
+    [isCamBlockedByHost, syncLocalStreamAndRenegotiate]
   );
 
   const toggleMic = useCallback(() => {
-    if (isMutedByHost) return;
+    if (isMutedByHost) {
+      toast.error("You are muted by the room host");
+      return;
+    }
     setMicActive(!isMicOn);
   }, [isMutedByHost, isMicOn, setMicActive]);
 
   const toggleCamera = useCallback(() => {
+    if (isCamBlockedByHost) {
+      toast.error("Camera is disabled by the room host");
+      return;
+    }
     setCamActive(!isCameraOn);
-  }, [isCameraOn, setCamActive]);
+  }, [isCamBlockedByHost, isCameraOn, setCamActive]);
 
   // Push to talk state changes
   const setPushToTalk = useCallback(
@@ -511,8 +619,21 @@ export function useWebRTCMedia({
       setIsMicOn(false);
       setIsPushToTalkActive(false);
       setLocalMicLevel(0);
+      syncLocalStreamAndRenegotiate();
     }
-  }, [isMutedByHost]);
+  }, [isMutedByHost, syncLocalStreamAndRenegotiate]);
+
+  // Force disable camera if blocked by host
+  useEffect(() => {
+    if (isCamBlockedByHost) {
+      if (camTrackRef.current) {
+        camTrackRef.current.stop();
+        camTrackRef.current = null;
+      }
+      setIsCameraOn(false);
+      syncLocalStreamAndRenegotiate();
+    }
+  }, [isCamBlockedByHost, syncLocalStreamAndRenegotiate]);
 
   // Keyboard shortcut listener: Hold 'V' key for Push-to-Talk
   useEffect(() => {
@@ -526,7 +647,12 @@ export function useWebRTCMedia({
       const target = e.target as HTMLElement | null;
       if (!target) return;
       const tag = target.tagName.toLowerCase();
-      if (tag === "input" || tag === "textarea" || target.isContentEditable || target.closest(".cm-editor")) {
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        target.isContentEditable ||
+        target.closest(".cm-editor")
+      ) {
         return;
       }
 
@@ -568,7 +694,7 @@ export function useWebRTCMedia({
         localStreamRef.current.getTracks().forEach((track) => track.stop());
         localStreamRef.current = null;
       }
-      peersRef.current.forEach((pc) => {
+      peersRef.current.forEach(({ pc }) => {
         try {
           pc.close();
         } catch {}

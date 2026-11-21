@@ -63,70 +63,101 @@ export function MultiplayerWhiteboard({
   }, [ydoc]);
 
   // Redraw canvas whenever strokes change or canvas resizes
+  // Keep the canvas transparent and draw eraser strokes with destination-out for zero color streak
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const rect = container.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
 
-    // Draw all strokes
+    // Clear entire canvas to transparent
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
+    // Draw all synchronized strokes
     strokes.forEach((stroke) => {
       if (stroke.points.length < 2) return;
+      const firstPoint = stroke.points[0];
+      if (!firstPoint) return;
+
+      ctx.save();
       ctx.beginPath();
-      ctx.strokeStyle = stroke.color;
       ctx.lineWidth = stroke.width;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
 
-      const firstPoint = stroke.points[0];
-      if (!firstPoint) return;
-      ctx.moveTo(firstPoint.x * canvas.width, firstPoint.y * canvas.height);
+      if (stroke.color === "eraser") {
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+      } else {
+        ctx.globalCompositeOperation = "source-over";
+        ctx.strokeStyle = stroke.color;
+      }
+
+      ctx.moveTo(firstPoint.x * width, firstPoint.y * height);
 
       for (let i = 1; i < stroke.points.length; i++) {
         const pt = stroke.points[i];
         if (pt) {
-          ctx.lineTo(pt.x * canvas.width, pt.y * canvas.height);
+          ctx.lineTo(pt.x * width, pt.y * height);
         }
       }
       ctx.stroke();
+      ctx.restore();
     });
   }, [strokes]);
 
-  // Keep canvas resolution synced to container
+  // Keep canvas resolution synced to container using ResizeObserver
   useEffect(() => {
-    const handleResize = () => {
-      const container = containerRef.current;
-      const canvas = canvasRef.current;
-      if (!container || !canvas) return;
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    const updateDimensions = () => {
       const rect = container.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
       const dpr = window.devicePixelRatio || 1;
 
-      // Adjust pixel density for crisp lines
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      // Sync backing buffer pixels
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+
+      // Set scale transform
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        ctx.scale(dpr, dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
       renderCanvas();
     };
 
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    updateDimensions();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateDimensions();
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
   }, [renderCanvas]);
 
   useEffect(() => {
     renderCanvas();
   }, [renderCanvas]);
 
-  // Coordinate normalizer (0 to 1)
+  // Coordinate normalizer (0 to 1) based on container's bounding client rect
   const getNormalizedPoint = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
+    const container = containerRef.current;
+    if (!container) return { x: 0, y: 0 };
+    const rect = container.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
     return { x, y };
@@ -136,36 +167,69 @@ export function MultiplayerWhiteboard({
     if (isMuted) return;
     if (e.button !== 0) return; // Primary button only
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     canvas.setPointerCapture(e.pointerId);
 
     isDrawingRef.current = true;
     const pt = getNormalizedPoint(e);
     currentPointsRef.current = [pt];
 
-    // Immediate preview on canvas
+    // Immediate preview line start
     const ctx = canvas.getContext("2d");
     if (ctx) {
+      const rect = container.getBoundingClientRect();
+      ctx.save();
       ctx.beginPath();
-      ctx.strokeStyle = tool === "eraser" ? "#0f172a" : color;
       ctx.lineWidth = tool === "eraser" ? brushWidth * 3 : brushWidth;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.moveTo(pt.x * canvas.width, pt.y * canvas.height);
+
+      if (tool === "eraser") {
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+      } else {
+        ctx.globalCompositeOperation = "source-over";
+        ctx.strokeStyle = color;
+      }
+
+      ctx.moveTo(pt.x * rect.width, pt.y * rect.height);
+      ctx.restore();
     }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawingRef.current) return;
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     const pt = getNormalizedPoint(e);
     currentPointsRef.current.push(pt);
 
     const ctx = canvas.getContext("2d");
     if (ctx) {
-      ctx.lineTo(pt.x * canvas.width, pt.y * canvas.height);
-      ctx.stroke();
+      const rect = container.getBoundingClientRect();
+      ctx.save();
+      ctx.beginPath();
+      ctx.lineWidth = tool === "eraser" ? brushWidth * 3 : brushWidth;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      if (tool === "eraser") {
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+      } else {
+        ctx.globalCompositeOperation = "source-over";
+        ctx.strokeStyle = color;
+      }
+
+      const prev = currentPointsRef.current[currentPointsRef.current.length - 2];
+      if (prev) {
+        ctx.moveTo(prev.x * rect.width, prev.y * rect.height);
+        ctx.lineTo(pt.x * rect.width, pt.y * rect.height);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
   };
 
@@ -182,7 +246,7 @@ export function MultiplayerWhiteboard({
       return;
     }
 
-    const strokeColor = tool === "eraser" ? "#0f172a" : color;
+    const strokeColor = tool === "eraser" ? "eraser" : color;
     const strokeWidth = tool === "eraser" ? brushWidth * 3 : brushWidth;
 
     const newStroke: WhiteboardStroke = {
@@ -203,7 +267,6 @@ export function MultiplayerWhiteboard({
     if (!ydoc) return;
     const strokesArray = ydoc.getArray<WhiteboardStroke>("whiteboard-strokes");
     const arr = strokesArray.toArray();
-    // Find last stroke by current user or last stroke overall
     let removeIndex = -1;
     for (let i = arr.length - 1; i >= 0; i--) {
       const s = arr[i];
@@ -220,6 +283,7 @@ export function MultiplayerWhiteboard({
       ydoc.transact(() => {
         strokesArray.delete(removeIndex, 1);
       });
+      renderCanvas();
     }
   };
 
@@ -227,20 +291,26 @@ export function MultiplayerWhiteboard({
     if (!ydoc) return;
     const strokesArray = ydoc.getArray<WhiteboardStroke>("whiteboard-strokes");
     if (strokesArray.length === 0) return;
+    currentPointsRef.current = [];
+    isDrawingRef.current = false;
     ydoc.transact(() => {
       strokesArray.delete(0, strokesArray.length);
     });
+    renderCanvas();
   };
 
   return (
-    <div className="relative flex flex-col w-full h-full bg-[#0a0f1d] overflow-hidden select-none">
+    <div
+      ref={containerRef}
+      className="relative flex flex-col w-full h-full bg-[#0a0f1d] overflow-hidden select-none"
+    >
       {/* Floating Toolbar */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 p-1.5 rounded-xl bg-card/90 backdrop-blur-md border border-border shadow-2xl">
         {/* Tool selector */}
         <Button
           size="sm"
           variant={tool === "pen" ? "default" : "ghost"}
-          className="h-8 px-2.5 gap-1.5 text-xs font-semibold"
+          className="h-8 px-2.5 gap-1.5 text-xs font-semibold cursor-pointer"
           onClick={() => setTool("pen")}
           title="Pen tool"
         >
@@ -250,113 +320,97 @@ export function MultiplayerWhiteboard({
         <Button
           size="sm"
           variant={tool === "eraser" ? "default" : "ghost"}
-          className="h-8 px-2.5 gap-1.5 text-xs font-semibold"
+          className="h-8 px-2.5 gap-1.5 text-xs font-semibold cursor-pointer"
           onClick={() => setTool("eraser")}
-          title="Eraser tool"
+          title="Eraser tool (Clean transparent removal)"
         >
           <Eraser className="size-3.5" />
           <span className="hidden sm:inline">Eraser</span>
         </Button>
 
-        <div className="h-4 w-px bg-border/80 mx-1" />
+        <div className="h-4 w-px bg-border/80 mx-0.5" />
 
-        {/* Color Palette (Among Us swatches) */}
-        <div className="flex items-center gap-1">
-          {USER_COLORS.map((c) => {
-            const isSelected = tool === "pen" && color === c.color;
-            return (
+        {/* Color Palette (Active when tool === 'pen') */}
+        {tool === "pen" && (
+          <div className="flex items-center gap-1 px-1">
+            {USER_COLORS.slice(0, 6).map((c) => (
               <button
                 key={c.name}
                 type="button"
-                onClick={() => {
-                  setColor(c.color);
-                  setTool("pen");
-                }}
-                className={`relative size-5 rounded-full transition-transform cursor-pointer ${
-                  isSelected ? "scale-125 ring-2 ring-primary ring-offset-1 ring-offset-card" : "hover:scale-110 opacity-80 hover:opacity-100"
+                onClick={() => setColor(c.color)}
+                className={`size-5 rounded-full transition-transform cursor-pointer ${
+                  color === c.color
+                    ? "ring-2 ring-primary ring-offset-1 ring-offset-card scale-110"
+                    : "hover:scale-110 opacity-80 hover:opacity-100"
                 }`}
                 style={{ backgroundColor: c.color }}
                 title={c.name}
               />
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
 
-        <div className="h-4 w-px bg-border/80 mx-1" />
+        <div className="h-4 w-px bg-border/80 mx-0.5" />
 
-        {/* Brush Size */}
+        {/* Brush Size Controls */}
         <div className="flex items-center gap-1 px-1">
           <button
             type="button"
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+            disabled={brushWidth <= 2}
             onClick={() => setBrushWidth((w) => Math.max(2, w - 2))}
-            title="Decrease stroke width"
+            className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-30 cursor-pointer"
+            title="Decrease size"
           >
             <Minus className="size-3" />
           </button>
-          <span className="text-[11px] font-mono w-4 text-center text-foreground font-semibold">
+          <span className="text-[10px] font-mono w-4 text-center text-muted-foreground">
             {brushWidth}
           </span>
           <button
             type="button"
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-            onClick={() => setBrushWidth((w) => Math.min(24, w + 2))}
-            title="Increase stroke width"
+            disabled={brushWidth >= 20}
+            onClick={() => setBrushWidth((w) => Math.min(20, w + 2))}
+            className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-30 cursor-pointer"
+            title="Increase size"
           >
             <Plus className="size-3" />
           </button>
         </div>
 
-        <div className="h-4 w-px bg-border/80 mx-1" />
+        <div className="h-4 w-px bg-border/80 mx-0.5" />
 
-        {/* Undo and Clear */}
+        {/* Undo Button */}
         <Button
           size="sm"
           variant="ghost"
-          className="h-8 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
+          className="size-8 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
           onClick={handleUndo}
-          title="Undo last stroke"
+          title="Undo your last stroke"
         >
           <Undo2 className="size-3.5" />
-          <span className="hidden md:inline">Undo</span>
         </Button>
 
+        {/* Clear Button */}
         <Button
           size="sm"
           variant="ghost"
-          className="h-8 px-2 text-xs gap-1 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          className="size-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
           onClick={handleClear}
-          title="Clear whiteboard"
+          title="Clear entire whiteboard"
         >
           <Trash2 className="size-3.5" />
-          <span className="hidden md:inline">Clear</span>
         </Button>
       </div>
 
-      {isMuted && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-destructive/20 border border-destructive/40 text-destructive text-xs font-semibold">
-          You are muted by room moderation — drawing is disabled
-        </div>
-      )}
-
-      {/* Grid Pattern Background */}
-      <div
-        ref={containerRef}
-        className="w-full h-full flex-1 relative cursor-crosshair overflow-hidden touch-none"
-        style={{
-          backgroundImage: `radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0)`,
-          backgroundSize: "24px 24px",
-        }}
-      >
-        <canvas
-          ref={canvasRef}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={finishDrawing}
-          onPointerCancel={finishDrawing}
-          className="w-full h-full block"
-        />
-      </div>
+      {/* Transparent Canvas Surface with Dark Background on Parent Div */}
+      <canvas
+        ref={canvasRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={finishDrawing}
+        onPointerCancel={finishDrawing}
+        className="w-full h-full touch-none cursor-crosshair block"
+      />
     </div>
   );
 }

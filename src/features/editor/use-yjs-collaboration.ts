@@ -30,7 +30,20 @@ export interface RoomRoles {
   hostId: string | null;
   subLeaderIds: string[];
   mutedIds: string[];
+  camBlockedIds: string[];
   kickedIds: string[];
+}
+
+export interface ModerationReport {
+  id: string;
+  reporterId: string;
+  reporterName: string;
+  targetId: string;
+  targetName: string;
+  reason: string;
+  note?: string | undefined;
+  timestamp: number;
+  status: "pending" | "resolved";
 }
 
 export interface JoinRequest {
@@ -153,6 +166,8 @@ export function useYjsCollaboration(roomId: string) {
   const [hostId, setHostId] = useState<string | null>(() => isCreatorInitial ? getOrCreateLocalUser().id : null);
   const [subLeaderIds, setSubLeaderIds] = useState<string[]>([]);
   const [mutedIds, setMutedIds] = useState<string[]>([]);
+  const [camBlockedIds, setCamBlockedIds] = useState<string[]>([]);
+  const [reports, setReports] = useState<ModerationReport[]>([]);
   const [kickedIds, setKickedIds] = useState<string[]>([]);
   const [wasKicked, setWasKicked] = useState(false);
   const [reactions, setReactions] = useState<EmojiReaction[]>([]);
@@ -208,6 +223,7 @@ export function useYjsCollaboration(roomId: string) {
     const joinRequestsMap = ydoc.getMap<JoinRequest>("joinRequests");
     const approvedUsersMap = ydoc.getMap<ApprovedUser>("approvedUsers");
     const roomRolesMap = ydoc.getMap<any>("room-roles");
+    const moderationReportsArray = ydoc.getArray<ModerationReport>("moderation-reports");
 
     const isCreatorSession = typeof window !== "undefined" && (
       sessionStorage.getItem(`syncforge_creator_${roomId}`) === "true" ||
@@ -347,16 +363,43 @@ export function useYjsCollaboration(roomId: string) {
       const host = (roomRolesMap.get("hostId") as string) || (roomMeta.get("hostId") as string) || null;
       const subLeaders = (roomRolesMap.get("subLeaderIds") as string[]) || [];
       const muted = (roomRolesMap.get("mutedIds") as string[]) || [];
+      const camBlocked = (roomRolesMap.get("camBlockedIds") as string[]) || [];
       const kicked = (roomRolesMap.get("kickedIds") as string[]) || [];
 
       setHostId(host);
       setSubLeaderIds(Array.isArray(subLeaders) ? subLeaders : []);
       setMutedIds(Array.isArray(muted) ? muted : []);
+      setCamBlockedIds(Array.isArray(camBlocked) ? camBlocked : []);
       setKickedIds(Array.isArray(kicked) ? kicked : []);
 
       if (Array.isArray(kicked) && kicked.includes(currentUser.id)) {
         setWasKicked(true);
         wsProvider.disconnect();
+      }
+    };
+
+    const prevPendingReportIdsRef = new Set<string>();
+
+    const updateModerationReports = () => {
+      const allReports = moderationReportsArray.toArray();
+      setReports(allReports);
+
+      // Check if new pending reports arrived for host or sub-leaders
+      const isMeHostOrMod =
+        currentUser.id === hostId ||
+        (Array.isArray(roomRolesMap.get("subLeaderIds")) &&
+          (roomRolesMap.get("subLeaderIds") as string[]).includes(currentUser.id));
+
+      if (isMeHostOrMod) {
+        allReports.forEach((rep) => {
+          if (rep.status === "pending" && !prevPendingReportIdsRef.has(rep.id)) {
+            prevPendingReportIdsRef.add(rep.id);
+            toast.warning(`New report: ${rep.reporterName} reported ${rep.targetName}`, {
+              description: rep.reason,
+              duration: 4000,
+            });
+          }
+        });
       }
     };
 
@@ -389,6 +432,7 @@ export function useYjsCollaboration(roomId: string) {
     roomRolesMap.observe(updateRoomRoles);
     joinRequestsMap.observe(updateJoinRequests);
     approvedUsersMap.observe(updateApprovedUsers);
+    moderationReportsArray.observe(updateModerationReports);
     wsProvider.awareness.on("change", updateActiveUsers);
 
     // Clean up expired floating reactions periodically
@@ -480,6 +524,7 @@ export function useYjsCollaboration(roomId: string) {
       roomRolesMap.unobserve(updateRoomRoles);
       joinRequestsMap.unobserve(updateJoinRequests);
       approvedUsersMap.unobserve(updateApprovedUsers);
+      moderationReportsArray.unobserve(updateModerationReports);
 
       setWsProvider((current) => (current === wsProvider ? null : current));
       setYdoc((current) => (current === ydoc ? null : current));
@@ -792,8 +837,127 @@ export function useYjsCollaboration(roomId: string) {
     });
   }, []);
 
+  const blockCamera = useCallback((targetUserId: string) => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const current = (roomRolesMap.get("camBlockedIds") as string[]) || [];
+    if (!current.includes(targetUserId)) {
+      ydocRef.current.transact(() => {
+        roomRolesMap.set("camBlockedIds", [...current, targetUserId]);
+      });
+    }
+  }, []);
+
+  const unblockCamera = useCallback((targetUserId: string) => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const current = (roomRolesMap.get("camBlockedIds") as string[]) || [];
+    ydocRef.current.transact(() => {
+      roomRolesMap.set("camBlockedIds", current.filter((id) => id !== targetUserId));
+    });
+  }, []);
+
+  const muteAllPeers = useCallback(() => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const peerIds = activeUsers.filter((u) => u.id !== localUser.id).map((u) => u.id);
+    const currentMuted = (roomRolesMap.get("mutedIds") as string[]) || [];
+    const merged = Array.from(new Set([...currentMuted, ...peerIds]));
+    ydocRef.current.transact(() => {
+      roomRolesMap.set("mutedIds", merged);
+    });
+    toast.info("All peers muted");
+  }, [activeUsers, localUser.id]);
+
+  const blockAllPeerCameras = useCallback(() => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const peerIds = activeUsers.filter((u) => u.id !== localUser.id).map((u) => u.id);
+    const currentBlocked = (roomRolesMap.get("camBlockedIds") as string[]) || [];
+    const merged = Array.from(new Set([...currentBlocked, ...peerIds]));
+    ydocRef.current.transact(() => {
+      roomRolesMap.set("camBlockedIds", merged);
+    });
+    toast.info("All peer cameras disabled");
+  }, [activeUsers, localUser.id]);
+
+  const unmuteAndAllowAll = useCallback(() => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    ydocRef.current.transact(() => {
+      roomRolesMap.set("mutedIds", []);
+      roomRolesMap.set("camBlockedIds", []);
+    });
+    toast.success("All peers unmuted and cameras allowed");
+  }, []);
+
+  const submitReport = useCallback(
+    (targetId: string, targetName: string, reason: string, note?: string) => {
+      if (!ydocRef.current) return;
+      const moderationReportsArray = ydocRef.current.getArray<ModerationReport>("moderation-reports");
+      const report: ModerationReport = {
+        id: `rep-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        reporterId: localUser.id,
+        reporterName: localUser.name,
+        targetId,
+        targetName,
+        reason,
+        note,
+        timestamp: Date.now(),
+        status: "pending",
+      };
+      ydocRef.current.transact(() => {
+        moderationReportsArray.push([report]);
+      });
+      toast.success("Report sent to Host");
+    },
+    [localUser]
+  );
+
+  const resolveReport = useCallback((reportId: string, action?: "mute" | "camOff" | "kick" | "dismiss") => {
+    if (!ydocRef.current) return;
+    const moderationReportsArray = ydocRef.current.getArray<ModerationReport>("moderation-reports");
+    const list = moderationReportsArray.toArray();
+    const repIndex = list.findIndex((r) => r.id === reportId);
+    if (repIndex === -1) return;
+
+    const rep = list[repIndex];
+    if (!rep) return;
+
+    ydocRef.current.transact(() => {
+      moderationReportsArray.delete(repIndex, 1);
+      moderationReportsArray.insert(repIndex, [{ ...rep, status: "resolved" }]);
+
+      if (action === "mute") {
+        const roomRolesMap = ydocRef.current!.getMap<any>("room-roles");
+        const currentMuted = (roomRolesMap.get("mutedIds") as string[]) || [];
+        if (!currentMuted.includes(rep.targetId)) {
+          roomRolesMap.set("mutedIds", [...currentMuted, rep.targetId]);
+        }
+      } else if (action === "camOff") {
+        const roomRolesMap = ydocRef.current!.getMap<any>("room-roles");
+        const current = (roomRolesMap.get("camBlockedIds") as string[]) || [];
+        if (!current.includes(rep.targetId)) {
+          roomRolesMap.set("camBlockedIds", [...current, rep.targetId]);
+        }
+      } else if (action === "kick") {
+        const roomRolesMap = ydocRef.current!.getMap<any>("room-roles");
+        const current = (roomRolesMap.get("kickedIds") as string[]) || [];
+        if (!current.includes(rep.targetId)) {
+          roomRolesMap.set("kickedIds", [...current, rep.targetId]);
+        }
+      }
+    });
+
+    if (action === "mute") toast.success(`Muted ${rep.targetName} and resolved report`);
+    else if (action === "camOff") toast.success(`Turned off ${rep.targetName}'s camera and resolved report`);
+    else if (action === "kick") toast.success(`Kicked ${rep.targetName} and resolved report`);
+    else toast.info("Report dismissed");
+  }, []);
+
   const isSubLeader = subLeaderIds.includes(localUser.id);
   const isMuted = mutedIds.includes(localUser.id);
+  const isCamBlocked = camBlockedIds.includes(localUser.id);
 
   return {
     localUser,
@@ -831,15 +995,26 @@ export function useYjsCollaboration(roomId: string) {
     // Moderation & Roles
     subLeaderIds,
     mutedIds,
+    camBlockedIds,
     kickedIds,
     wasKicked,
     isSubLeader,
     isMuted,
+    isCamBlocked,
     kickUser,
     muteUser,
     unmuteUser,
+    blockCamera,
+    unblockCamera,
+    muteAllPeers,
+    blockAllPeerCameras,
+    unmuteAndAllowAll,
     setSubLeader,
     transferHost,
+    // Reports queue
+    reports,
+    submitReport,
+    resolveReport,
     // Reactions
     reactions,
     sendReaction,
