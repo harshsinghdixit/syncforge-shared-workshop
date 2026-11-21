@@ -55,6 +55,9 @@ import { LobbyScreen } from "./lobby-screen";
 import { MultiplayerWhiteboard } from "./multiplayer-whiteboard";
 import { ChatDrawer, type ChatMessage } from "./chat-drawer";
 import { FloatingReactions } from "./floating-reactions";
+import { useWebRTCMedia } from "./use-webrtc-media";
+import { DraggableVideoBubbles } from "./draggable-video-bubbles";
+import { MediaControlsDock } from "./media-controls-dock";
 
 function FileGlyph({ name }: { name: string }) {
   if (name.endsWith(".md")) return <FileText aria-hidden="true" className="size-4" />;
@@ -1102,6 +1105,25 @@ function ActiveRoomWorkspace({
     sendReaction,
   } = useYjsCollaboration(roomId);
 
+  const {
+    localStream,
+    peerStreams,
+    isMicOn,
+    isCameraOn,
+    isPushToTalkActive,
+    cleanBg,
+    speakingUserIds,
+    toggleMic,
+    toggleCamera,
+    setPushToTalk,
+    toggleCleanBg,
+  } = useWebRTCMedia({
+    ydoc,
+    localUser,
+    activeUsers,
+    isMutedByHost: isMuted,
+  });
+
   // If local user was kicked, invoke kick handler immediately
   useEffect(() => {
     if (wasKicked) {
@@ -1377,6 +1399,31 @@ function ActiveRoomWorkspace({
         reactions={reactions}
         onSendReaction={sendReaction}
         disabled={isMuted}
+      />
+
+      {/* Floating Draggable Video Bubbles */}
+      <DraggableVideoBubbles
+        localUser={localUser}
+        activeUsers={activeUsers}
+        localStream={localStream}
+        peerStreams={peerStreams}
+        isCameraOn={isCameraOn}
+        isMicOn={isMicOn}
+        speakingUserIds={speakingUserIds}
+        cleanBg={cleanBg}
+      />
+
+      {/* Floating Bottom Media Controls Dock */}
+      <MediaControlsDock
+        isMicOn={isMicOn}
+        isCameraOn={isCameraOn}
+        isPushToTalkActive={isPushToTalkActive}
+        cleanBg={cleanBg}
+        isMutedByHost={isMuted}
+        onToggleMic={toggleMic}
+        onToggleCamera={toggleCamera}
+        onSetPushToTalk={setPushToTalk}
+        onToggleCleanBg={toggleCleanBg}
       />
 
       {/* Public & Private Chat Drawer */}
