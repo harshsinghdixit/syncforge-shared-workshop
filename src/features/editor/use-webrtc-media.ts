@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as Y from "yjs";
+import { toast } from "sonner";
 import type { RemoteUser } from "./use-yjs-collaboration";
 
 export interface RTCSignalMessage {
@@ -36,12 +37,19 @@ export function useWebRTCMedia({
   const [cleanBg, setCleanBg] = useState(false);
   const [peerStreams, setPeerStreams] = useState<PeerStream[]>([]);
   const [speakingUserIds, setSpeakingUserIds] = useState<Set<string>>(new Set());
+  const [localMicLevel, setLocalMicLevel] = useState<number>(0);
 
-  // References
+  // References to preserve track lifecycles across renders without closing
   const localStreamRef = useRef<MediaStream | null>(null);
+  const micTrackRef = useRef<MediaStreamTrack | null>(null);
+  const camTrackRef = useRef<MediaStreamTrack | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const processedSignalsRef = useRef<Set<string>>(new Set());
+
+  // Web Audio analyser for local mic meter & remote speaking detectors
   const audioContextRef = useRef<AudioContext | null>(null);
+  const localAnalyserRef = useRef<AnalyserNode | null>(null);
+  const localAnimFrameRef = useRef<number | null>(null);
   const analysersRef = useRef<Map<string, { analyser: AnalyserNode; animId: number }>>(new Map());
 
   // WebRTC ICE configuration with Google STUN
@@ -71,26 +79,25 @@ export function useWebRTCMedia({
     [ydoc, localUser.id]
   );
 
-  // Monitor speaking levels for audio streams
-  const monitorSpeaking = useCallback((userId: string, stream: MediaStream) => {
+  // Monitor speaking levels for remote audio streams
+  const monitorRemoteSpeaking = useCallback((userId: string, stream: MediaStream) => {
     if (typeof window === "undefined") return;
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) return;
 
     try {
-      if (!audioContextRef.current) {
+      if (!audioContextRef.current || audioContextRef.current.state === "closed") {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioContextClass) {
           audioContextRef.current = new AudioContextClass();
         }
       }
       const ctx = audioContextRef.current;
-      if (!ctx || ctx.state === "closed") return;
+      if (!ctx) return;
       if (ctx.state === "suspended") {
         ctx.resume().catch(() => {});
       }
 
-      // Disconnect existing analyser for this user if any
       const existing = analysersRef.current.get(userId);
       if (existing) {
         window.cancelAnimationFrame(existing.animId);
@@ -111,7 +118,7 @@ export function useWebRTCMedia({
           sum += buffer[i] ?? 0;
         }
         const avg = sum / buffer.length;
-        const isSpeaking = avg > 12;
+        const isSpeaking = avg > 14;
 
         setSpeakingUserIds((prev) => {
           const has = prev.has(userId);
@@ -138,6 +145,101 @@ export function useWebRTCMedia({
     }
   }, []);
 
+  // Monitor local mic volume level (0 - 100)
+  const startLocalAudioAnalysis = useCallback((track: MediaStreamTrack) => {
+    if (typeof window === "undefined") return;
+    try {
+      if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          audioContextRef.current = new AudioContextClass();
+        }
+      }
+      const ctx = audioContextRef.current;
+      if (!ctx) return;
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+
+      const singleStream = new MediaStream([track]);
+      const source = ctx.createMediaStreamSource(singleStream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 128;
+      source.connect(analyser);
+      localAnalyserRef.current = analyser;
+
+      const buffer = new Uint8Array(analyser.frequencyBinCount);
+      const readLevel = () => {
+        if (!track.enabled || track.readyState !== "live") {
+          setLocalMicLevel(0);
+          return;
+        }
+        analyser.getByteFrequencyData(buffer);
+        let sum = 0;
+        for (let i = 0; i < buffer.length; i++) {
+          sum += buffer[i] ?? 0;
+        }
+        const avg = sum / buffer.length;
+        const normalized = Math.min(100, Math.round((avg / 128) * 100));
+        setLocalMicLevel(normalized);
+
+        const isSpeaking = normalized > 12;
+        setSpeakingUserIds((prev) => {
+          const has = prev.has(localUser.id);
+          if (isSpeaking && !has) {
+            const next = new Set(prev);
+            next.add(localUser.id);
+            return next;
+          } else if (!isSpeaking && has) {
+            const next = new Set(prev);
+            next.delete(localUser.id);
+            return next;
+          }
+          return prev;
+        });
+
+        localAnimFrameRef.current = window.requestAnimationFrame(readLevel);
+      };
+
+      readLevel();
+    } catch (e) {
+      console.warn("Unable to start local audio analyser:", e);
+    }
+  }, [localUser.id]);
+
+  // Synchronize composite stream with localStream state
+  const syncLocalStream = useCallback(() => {
+    const tracks: MediaStreamTrack[] = [];
+    if (micTrackRef.current && micTrackRef.current.readyState === "live") {
+      tracks.push(micTrackRef.current);
+    }
+    if (camTrackRef.current && camTrackRef.current.readyState === "live") {
+      tracks.push(camTrackRef.current);
+    }
+
+    if (tracks.length > 0) {
+      const stream = new MediaStream(tracks);
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+
+      // Add/replace tracks on all peers
+      peersRef.current.forEach((pc) => {
+        const senders = pc.getSenders();
+        tracks.forEach((track) => {
+          const sender = senders.find((s) => s.track?.kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track).catch(() => {});
+          } else {
+            pc.addTrack(track, stream);
+          }
+        });
+      });
+    } else {
+      localStreamRef.current = null;
+      setLocalStream(null);
+    }
+  }, []);
+
   // Initialize or update RTCPeerConnection for a remote peer
   const getOrCreatePeer = useCallback(
     (peerId: string) => {
@@ -149,7 +251,7 @@ export function useWebRTCMedia({
       pc = new RTCPeerConnection(rtcConfig);
       peersRef.current.set(peerId, pc);
 
-      // Add local tracks to new peer connection
+      // Add current local tracks to new peer connection
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => {
           if (localStreamRef.current && pc) {
@@ -173,7 +275,7 @@ export function useWebRTCMedia({
             const filtered = prev.filter((p) => p.userId !== peerId);
             return [...filtered, { userId: peerId, stream }];
           });
-          monitorSpeaking(peerId, stream);
+          monitorRemoteSpeaking(peerId, stream);
         }
       };
 
@@ -193,17 +295,16 @@ export function useWebRTCMedia({
 
       return pc;
     },
-    [sendSignal, monitorSpeaking]
+    [sendSignal, monitorRemoteSpeaking]
   );
 
-  // Call peers when active users change (deterministic offerer by ID)
+  // Call peers when active users change (deterministic offerer by higher ID)
   useEffect(() => {
     if (!localStream) return;
 
     activeUsers.forEach((user) => {
       if (user.id === localUser.id) return;
 
-      // Higher ID creates the offer to avoid duplicate collisions
       if (localUser.id > user.id) {
         const pc = getOrCreatePeer(user.id);
         if (!pc) return;
@@ -243,7 +344,6 @@ export function useWebRTCMedia({
 
     const handleSignals = () => {
       signalsMap.forEach(async (signal, key) => {
-        // Only process signals destined for localUser that haven't been processed yet
         if (!signal || signal.to !== localUser.id || processedSignalsRef.current.has(signal.id)) {
           return;
         }
@@ -277,7 +377,7 @@ export function useWebRTCMedia({
             }
           }
         } catch {
-          // Handle SDP negotiation edge cases gracefully
+          // Handled gracefully
         }
       });
     };
@@ -290,95 +390,129 @@ export function useWebRTCMedia({
     };
   }, [ydoc, localUser.id, getOrCreatePeer, sendSignal]);
 
-  // Handle media hardware track enablement
-  const updateTracks = useCallback(async (wantMic: boolean, wantCam: boolean) => {
-    if (typeof window === "undefined" || !navigator?.mediaDevices) return;
+  // Turn Mic ON or OFF independently
+  const setMicActive = useCallback(
+    async (active: boolean) => {
+      if (typeof window === "undefined" || !navigator?.mediaDevices) return;
 
-    let current = localStreamRef.current;
+      if (active) {
+        if (isMutedByHost) {
+          toast.error("You are muted by the room host");
+          return;
+        }
 
-    // If we don't have a stream and user wants either mic or camera, request media
-    if (!current && (wantMic || wantCam)) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: wantCam ? { width: { ideal: 480 }, height: { ideal: 480 } } : true,
+        try {
+          if (!micTrackRef.current || micTrackRef.current.readyState !== "live") {
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const track = audioStream.getAudioTracks()[0];
+            if (track) {
+              micTrackRef.current = track;
+              track.enabled = true;
+              startLocalAudioAnalysis(track);
+            }
+          } else {
+            micTrackRef.current.enabled = true;
+          }
+          setIsMicOn(true);
+          syncLocalStream();
+        } catch (err: any) {
+          console.warn("Unable to access microphone:", err);
+          toast.error("Microphone access failed. Check permissions.");
+          setIsMicOn(false);
+        }
+      } else {
+        // Mute mic track (keep ready or stop)
+        if (micTrackRef.current) {
+          micTrackRef.current.enabled = false;
+        }
+        setIsMicOn(false);
+        setLocalMicLevel(0);
+        setSpeakingUserIds((prev) => {
+          if (prev.has(localUser.id)) {
+            const next = new Set(prev);
+            next.delete(localUser.id);
+            return next;
+          }
+          return prev;
         });
-
-        localStreamRef.current = stream;
-        setLocalStream(stream);
-
-        // Apply enabled states
-        stream.getAudioTracks().forEach((track) => {
-          track.enabled = wantMic && !isMutedByHost;
-        });
-        stream.getVideoTracks().forEach((track) => {
-          track.enabled = wantCam;
-        });
-
-        // Add to all active peer connections
-        peersRef.current.forEach((pc) => {
-          stream.getTracks().forEach((track) => {
-            pc.addTrack(track, stream);
-          });
-        });
-
-        monitorSpeaking(localUser.id, stream);
-      } catch (err) {
-        console.warn("Unable to access user media devices:", err);
-        return;
       }
-    } else if (current) {
-      // Stream already exists, toggle track states
-      current.getAudioTracks().forEach((track) => {
-        track.enabled = wantMic && !isMutedByHost;
-      });
-      current.getVideoTracks().forEach((track) => {
-        track.enabled = wantCam;
-      });
-    }
-  }, [isMutedByHost, localUser.id, monitorSpeaking]);
+    },
+    [isMutedByHost, localUser.id, startLocalAudioAnalysis, syncLocalStream]
+  );
 
-  // Toggle Microphone
+  // Turn Camera ON or OFF independently
+  const setCamActive = useCallback(
+    async (active: boolean) => {
+      if (typeof window === "undefined" || !navigator?.mediaDevices) return;
+
+      if (active) {
+        try {
+          if (!camTrackRef.current || camTrackRef.current.readyState !== "live") {
+            const videoStream = await navigator.mediaDevices.getUserMedia({
+              video: { width: { ideal: 480 }, height: { ideal: 480 } },
+            });
+            const track = videoStream.getVideoTracks()[0];
+            if (track) {
+              camTrackRef.current = track;
+              track.enabled = true;
+            }
+          } else {
+            camTrackRef.current.enabled = true;
+          }
+          setIsCameraOn(true);
+          syncLocalStream();
+        } catch (err: any) {
+          console.warn("Unable to access camera:", err);
+          toast.error("Camera access failed. Check permissions or device in use.");
+          setIsCameraOn(false);
+        }
+      } else {
+        // Explicitly stop camera track to turn off camera hardware LED cleanly
+        if (camTrackRef.current) {
+          camTrackRef.current.stop();
+          camTrackRef.current = null;
+        }
+        setIsCameraOn(false);
+        syncLocalStream();
+      }
+    },
+    [syncLocalStream]
+  );
+
   const toggleMic = useCallback(() => {
     if (isMutedByHost) return;
-    setIsMicOn((prev) => {
-      const next = !prev;
-      updateTracks(next || isPushToTalkActive, isCameraOn);
-      return next;
-    });
-  }, [isMutedByHost, isPushToTalkActive, isCameraOn, updateTracks]);
+    setMicActive(!isMicOn);
+  }, [isMutedByHost, isMicOn, setMicActive]);
 
-  // Toggle Camera
   const toggleCamera = useCallback(() => {
-    setIsCameraOn((prev) => {
-      const next = !prev;
-      updateTracks(isMicOn || isPushToTalkActive, next);
-      return next;
-    });
-  }, [isMicOn, isPushToTalkActive, updateTracks]);
-
-  // Force disable mic if muted by host
-  useEffect(() => {
-    if (isMutedByHost) {
-      setIsMicOn(false);
-      setIsPushToTalkActive(false);
-      if (localStreamRef.current) {
-        localStreamRef.current.getAudioTracks().forEach((track) => {
-          track.enabled = false;
-        });
-      }
-    }
-  }, [isMutedByHost]);
+    setCamActive(!isCameraOn);
+  }, [isCameraOn, setCamActive]);
 
   // Push to talk state changes
   const setPushToTalk = useCallback(
     (active: boolean) => {
       if (isMutedByHost) return;
       setIsPushToTalkActive(active);
-      updateTracks(active || isMicOn, isCameraOn);
+      if (active) {
+        setMicActive(true);
+      } else if (!isMicOn) {
+        setMicActive(false);
+      }
     },
-    [isMutedByHost, isMicOn, isCameraOn, updateTracks]
+    [isMutedByHost, isMicOn, setMicActive]
   );
+
+  // Force disable mic if muted by host
+  useEffect(() => {
+    if (isMutedByHost) {
+      if (micTrackRef.current) {
+        micTrackRef.current.enabled = false;
+      }
+      setIsMicOn(false);
+      setIsPushToTalkActive(false);
+      setLocalMicLevel(0);
+    }
+  }, [isMutedByHost]);
 
   // Keyboard shortcut listener: Hold 'V' key for Push-to-Talk
   useEffect(() => {
@@ -419,11 +553,20 @@ export function useWebRTCMedia({
     setCleanBg((prev) => !prev);
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on true component unmount ONLY
   useEffect(() => {
     return () => {
+      if (micTrackRef.current) {
+        micTrackRef.current.stop();
+        micTrackRef.current = null;
+      }
+      if (camTrackRef.current) {
+        camTrackRef.current.stop();
+        camTrackRef.current = null;
+      }
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
       }
       peersRef.current.forEach((pc) => {
         try {
@@ -437,6 +580,9 @@ export function useWebRTCMedia({
       });
       analysersRef.current.clear();
 
+      if (localAnimFrameRef.current) {
+        window.cancelAnimationFrame(localAnimFrameRef.current);
+      }
       if (audioContextRef.current && audioContextRef.current.state !== "closed") {
         audioContextRef.current.close().catch(() => {});
       }
@@ -451,6 +597,7 @@ export function useWebRTCMedia({
     isPushToTalkActive,
     cleanBg,
     speakingUserIds,
+    localMicLevel,
     toggleMic,
     toggleCamera,
     setPushToTalk,

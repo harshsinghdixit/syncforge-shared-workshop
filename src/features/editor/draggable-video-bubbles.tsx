@@ -1,10 +1,8 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import {
   RotateCcw,
   Minimize2,
   Maximize2,
-  Mic,
-  MicOff,
   VideoOff,
 } from "lucide-react";
 import type { RemoteUser } from "./use-yjs-collaboration";
@@ -33,7 +31,6 @@ function VideoTile({
   userColor,
   isSpeaking,
   cleanBg,
-  hasVideo = true,
 }: {
   stream: MediaStream | null;
   isLocal?: boolean;
@@ -41,19 +38,71 @@ function VideoTile({
   userColor: string;
   isSpeaking: boolean;
   cleanBg: boolean;
-  hasVideo?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [hasLiveVideo, setHasLiveVideo] = useState(false);
+
+  // Reliable attachment and play of video streams
+  const attachVideo = useCallback(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    if (stream) {
+      const videoTracks = stream.getVideoTracks();
+      const liveTrack = videoTracks.find((t) => t.readyState === "live" && t.enabled);
+
+      if (liveTrack) {
+        if (el.srcObject !== stream) {
+          el.srcObject = stream;
+        }
+        el.play().catch(() => {});
+        setHasLiveVideo(true);
+        return;
+      }
+    }
+
+    if (el.srcObject) {
+      el.srcObject = null;
+    }
+    setHasLiveVideo(false);
+  }, [stream]);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+    attachVideo();
+  }, [attachVideo]);
+
+  // Listen to track unmuted/muted events
+  useEffect(() => {
+    if (!stream) {
+      setHasLiveVideo(false);
+      return;
     }
+
+    const checkTracks = () => {
+      const videoTracks = stream.getVideoTracks();
+      const live = videoTracks.some((t) => t.readyState === "live" && t.enabled);
+      setHasLiveVideo(live);
+    };
+
+    checkTracks();
+    stream.getVideoTracks().forEach((track) => {
+      track.addEventListener("mute", checkTracks);
+      track.addEventListener("unmute", checkTracks);
+      track.addEventListener("ended", checkTracks);
+    });
+
+    return () => {
+      stream.getVideoTracks().forEach((track) => {
+        track.removeEventListener("mute", checkTracks);
+        track.removeEventListener("unmute", checkTracks);
+        track.removeEventListener("ended", checkTracks);
+      });
+    };
   }, [stream]);
 
   return (
     <div
-      className={`relative size-28 sm:size-32 rounded-full overflow-hidden transition-all duration-150 select-none shadow-2xl flex items-center justify-center ${
+      className={`relative size-28 sm:size-32 rounded-full overflow-hidden transition-all duration-200 select-none shadow-2xl flex items-center justify-center ${
         cleanBg
           ? "bg-slate-950/95 ring-2 ring-primary/40 backdrop-blur-md"
           : "bg-slate-900 border border-border"
@@ -64,21 +113,21 @@ function VideoTile({
           : `0 0 0 2px ${userColor}88, 0 4px 14px rgba(0,0,0,0.5)`,
       }}
     >
-      {hasVideo && stream && stream.getVideoTracks().some((t) => t.enabled) ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted={isLocal}
-          className={`w-full h-full object-cover pointer-events-none transition-transform duration-300 ${
-            isLocal ? "scale-x-[-1]" : ""
-          } ${
-            cleanBg
-              ? "scale-110 contrast-105 saturate-110 [mask-image:radial-gradient(circle_at_center,black_60%,transparent_100%)]"
-              : ""
-          }`}
-        />
-      ) : (
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={isLocal}
+        className={`w-full h-full object-cover pointer-events-none transition-transform duration-300 ${
+          hasLiveVideo ? "block" : "hidden"
+        } ${isLocal ? "scale-x-[-1]" : ""} ${
+          cleanBg
+            ? "scale-110 contrast-105 saturate-110 [mask-image:radial-gradient(circle_at_center,black_60%,transparent_100%)]"
+            : ""
+        }`}
+      />
+
+      {!hasLiveVideo && (
         <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900/90 text-center p-2">
           <div
             className="size-10 rounded-full flex items-center justify-center text-sm font-bold shadow-md mb-1"
@@ -102,7 +151,7 @@ function VideoTile({
         </span>
       </div>
 
-      {/* Speaking badge indicator */}
+      {/* Speaking glow indicator */}
       {isSpeaking && (
         <div
           className="absolute top-1.5 right-1.5 size-3 rounded-full animate-ping pointer-events-none"
@@ -144,14 +193,12 @@ export function DraggableVideoBubbles({
       color: localUser.color,
       isLocal: true,
       stream: localStream,
-      hasVideo: isCameraOn,
       isSpeaking: isMicOn && speakingUserIds.has(localUser.id),
     },
     ...peerStreams.map((ps) => {
       const user = activeUsers.find((u) => u.id === ps.userId);
       const name = user ? user.name : "Peer";
       const color = user ? user.color : "#38bdf8";
-      const hasVideo = ps.stream.getVideoTracks().some((t) => t.enabled);
       const isSpeaking = speakingUserIds.has(ps.userId);
 
       return {
@@ -160,7 +207,6 @@ export function DraggableVideoBubbles({
         color,
         isLocal: false,
         stream: ps.stream,
-        hasVideo,
         isSpeaking,
       };
     }),
@@ -269,7 +315,6 @@ export function DraggableVideoBubbles({
                 userColor={feed.color}
                 isSpeaking={feed.isSpeaking}
                 cleanBg={cleanBg}
-                hasVideo={feed.hasVideo}
               />
             </div>
           );

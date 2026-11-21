@@ -1113,6 +1113,7 @@ function ActiveRoomWorkspace({
     isPushToTalkActive,
     cleanBg,
     speakingUserIds,
+    localMicLevel,
     toggleMic,
     toggleCamera,
     setPushToTalk,
@@ -1420,6 +1421,7 @@ function ActiveRoomWorkspace({
         isPushToTalkActive={isPushToTalkActive}
         cleanBg={cleanBg}
         isMutedByHost={isMuted}
+        micLevel={localMicLevel}
         onToggleMic={toggleMic}
         onToggleCamera={toggleCamera}
         onSetPushToTalk={setPushToTalk}
