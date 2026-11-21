@@ -548,3 +548,26 @@
   display: none !important;
 }
 
+@keyframes floatFadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.7);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(0px) scale(1.15);
+  }
+  80% {
+    opacity: 0.9;
+    transform: translateY(-80px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-130px) scale(0.9);
+  }
+}
+
+.animate-float-fade {
+  animation: floatFadeUp 2.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+

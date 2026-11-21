@@ -6,6 +6,7 @@ import {
   Circle,
   Code2,
   Copy,
+  Crown,
   FileCode,
   FilePlus2,
   FileText,
@@ -14,11 +15,20 @@ import {
   Github,
   Layers3,
   LogOut,
+  MessageSquare,
+  Paintbrush,
   Redo2,
   RotateCcw,
   Share2,
+  Shield,
+  ShieldAlert,
   Trash2,
   Undo2,
+  UserCheck,
+  UserMinus,
+  UserX,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 
@@ -33,6 +43,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -41,6 +52,9 @@ import { CodeMirrorEditor } from "./codemirror-editor";
 import { GitHubModal } from "./github-modal";
 import { WaitingRoomModal, HostRequestBanner } from "./waiting-room";
 import { LobbyScreen } from "./lobby-screen";
+import { MultiplayerWhiteboard } from "./multiplayer-whiteboard";
+import { ChatDrawer, type ChatMessage } from "./chat-drawer";
+import { FloatingReactions } from "./floating-reactions";
 
 function FileGlyph({ name }: { name: string }) {
   if (name.endsWith(".md")) return <FileText aria-hidden="true" className="size-4" />;
@@ -273,6 +287,145 @@ function UserProfilePopover({
   );
 }
 
+function UserActionsMenu({
+  member,
+  isHost,
+  isSubLeader,
+  isMemberHost,
+  isMemberSubLeader,
+  isMemberMuted,
+  onKick,
+  onToggleMute,
+  onToggleSubLeader,
+  onTransferHost,
+}: {
+  member: RemoteUser;
+  isHost: boolean;
+  isSubLeader: boolean;
+  isMemberHost: boolean;
+  isMemberSubLeader: boolean;
+  isMemberMuted: boolean;
+  onKick: () => void;
+  onToggleMute: () => void;
+  onToggleSubLeader: () => void;
+  onTransferHost: () => void;
+}) {
+  const canModerate = isHost || (isSubLeader && !isMemberHost);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-transform hover:scale-105 shadow-sm cursor-pointer outline-none ring-offset-background focus-visible:ring-1 focus-visible:ring-primary"
+          style={{
+            backgroundColor: `${member.color}18`,
+            borderColor: `${member.color}60`,
+          }}
+          title={member.name}
+        >
+          <span
+            className="size-2 rounded-full animate-pulse shrink-0"
+            style={{ backgroundColor: member.color }}
+          />
+          <span className="font-bold text-[11px] truncate max-w-[85px]" style={{ color: member.color }}>
+            {member.name}
+          </span>
+          {isMemberHost ? (
+            <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider flex items-center gap-0.5">
+              👑 HOST
+            </span>
+          ) : isMemberSubLeader ? (
+            <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-sky-500/20 text-sky-400 border border-sky-500/40 tracking-wider flex items-center gap-0.5">
+              🛡️ MOD
+            </span>
+          ) : null}
+          {isMemberMuted && (
+            <span title="Muted by moderator">
+              <VolumeX className="size-3 text-destructive shrink-0" />
+            </span>
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48 bg-card border border-border shadow-xl rounded-xl p-1 z-50">
+        <div className="px-2 py-1.5 text-xs">
+          <div className="font-bold text-foreground truncate" style={{ color: member.color }}>
+            {member.name}
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {isMemberHost ? "Room Host" : isMemberSubLeader ? "Sub-Leader (Moderator)" : "Collaborator"}
+          </div>
+        </div>
+        <DropdownMenuSeparator />
+
+        {canModerate ? (
+          <>
+            <DropdownMenuItem
+              onClick={onToggleMute}
+              className="gap-2 text-xs cursor-pointer"
+            >
+              {isMemberMuted ? (
+                <>
+                  <Volume2 className="size-3.5 text-emerald-400" />
+                  <span>Unmute User</span>
+                </>
+              ) : (
+                <>
+                  <VolumeX className="size-3.5 text-amber-400" />
+                  <span>Mute User</span>
+                </>
+              )}
+            </DropdownMenuItem>
+
+            {isHost && (
+              <>
+                <DropdownMenuItem
+                  onClick={onToggleSubLeader}
+                  className="gap-2 text-xs cursor-pointer"
+                >
+                  {isMemberSubLeader ? (
+                    <>
+                      <UserMinus className="size-3.5 text-sky-400" />
+                      <span>Remove Sub-Leader</span>
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="size-3.5 text-sky-400" />
+                      <span>Make Sub-Leader</span>
+                    </>
+                  )}
+                </DropdownMenuItem>
+
+                <DropdownMenuItem
+                  onClick={onTransferHost}
+                  className="gap-2 text-xs text-amber-400 cursor-pointer"
+                >
+                  <Crown className="size-3.5" />
+                  <span>Transfer Host</span>
+                </DropdownMenuItem>
+              </>
+            )}
+
+            <DropdownMenuSeparator />
+
+            <DropdownMenuItem
+              onClick={onKick}
+              className="gap-2 text-xs text-destructive hover:bg-destructive/10 cursor-pointer"
+            >
+              <UserX className="size-3.5" />
+              <span>Kick from Room</span>
+            </DropdownMenuItem>
+          </>
+        ) : (
+          <div className="px-2 py-1 text-[11px] text-muted-foreground italic">
+            Only Host or Sub-Leaders can moderate.
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function TopBar({
   roomId,
   setRoomId,
@@ -281,9 +434,19 @@ function TopBar({
   activeUsers,
   localUser,
   hostId,
+  subLeaderIds,
+  mutedIds,
+  viewMode,
+  onViewModeChange,
   onOpenGitHub,
   onLeaveRoom,
   onUpdateUser,
+  onOpenChat,
+  unreadChat,
+  onKickUser,
+  onToggleMute,
+  onToggleSubLeader,
+  onTransferHost,
 }: {
   roomId: string;
   setRoomId: (roomId: string) => void;
@@ -292,10 +455,23 @@ function TopBar({
   activeUsers: RemoteUser[];
   localUser: RemoteUser;
   hostId: string | null;
+  subLeaderIds: string[];
+  mutedIds: string[];
+  viewMode: "code" | "whiteboard";
+  onViewModeChange: (mode: "code" | "whiteboard") => void;
   onOpenGitHub: () => void;
   onLeaveRoom: () => void;
   onUpdateUser: (updates: { name?: string; color?: string; colorLight?: string }) => void;
+  onOpenChat: () => void;
+  unreadChat: boolean;
+  onKickUser: (userId: string) => void;
+  onToggleMute: (userId: string) => void;
+  onToggleSubLeader: (userId: string) => void;
+  onTransferHost: (userId: string) => void;
 }) {
+  const isMeHost = hostId === localUser.id;
+  const isMeSubLeader = subLeaderIds.includes(localUser.id);
+
   return (
     <header className="topbar">
       <div className="brand-lockup">
@@ -331,9 +507,52 @@ function TopBar({
           aria-label="Room ID"
         />
         <InviteFriendsPopover roomId={roomId} />
+
+        {/* Code | Whiteboard View Mode Toggle */}
+        <div className="flex items-center p-0.5 rounded-lg bg-card/80 border border-border">
+          <button
+            type="button"
+            onClick={() => onViewModeChange("code")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+              viewMode === "code"
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+            }`}
+          >
+            <Code2 className="size-3.5" />
+            <span>Code</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onViewModeChange("whiteboard")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+              viewMode === "whiteboard"
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+            }`}
+          >
+            <Paintbrush className="size-3.5" />
+            <span>Whiteboard</span>
+          </button>
+        </div>
       </div>
 
       <div className="room-presence">
+        {/* Chat Drawer Button with Unread Indicator */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="relative h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground border-border"
+          onClick={onOpenChat}
+          title="Open Room Chat"
+        >
+          <MessageSquare className="size-3.5" />
+          <span className="hidden sm:inline">Chat</span>
+          {unreadChat && (
+            <span className="absolute -top-1 -right-1 size-2.5 rounded-full bg-emerald-500 animate-pulse ring-2 ring-background" />
+          )}
+        </Button>
+
         <Button
           variant="outline"
           size="sm"
@@ -357,6 +576,8 @@ function TopBar({
         <div className="flex items-center gap-1.5 flex-wrap" aria-label={`${activeUsers.length} active users`}>
           {activeUsers.map((member) => {
             const isMemberHost = member.id === hostId;
+            const isMemberSubLeader = subLeaderIds.includes(member.id);
+            const isMemberMuted = mutedIds.includes(member.id);
             const isMe = member.id === localUser.id;
 
             if (isMe) {
@@ -372,28 +593,19 @@ function TopBar({
             }
 
             return (
-              <div
+              <UserActionsMenu
                 key={member.id}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-transform hover:scale-105 shadow-sm"
-                style={{
-                  backgroundColor: `${member.color}18`,
-                  borderColor: `${member.color}60`,
-                }}
-                title={member.name}
-              >
-                <span
-                  className="size-2 rounded-full animate-pulse shrink-0"
-                  style={{ backgroundColor: member.color }}
-                />
-                <span className="font-bold text-[11px] truncate max-w-[85px]" style={{ color: member.color }}>
-                  {member.name}
-                </span>
-                {isMemberHost && (
-                  <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
-                    👑 HOST
-                  </span>
-                )}
-              </div>
+                member={member}
+                isHost={isMeHost}
+                isSubLeader={isMeSubLeader}
+                isMemberHost={isMemberHost}
+                isMemberSubLeader={isMemberSubLeader}
+                isMemberMuted={isMemberMuted}
+                onKick={() => onKickUser(member.id)}
+                onToggleMute={() => onToggleMute(member.id)}
+                onToggleSubLeader={() => onToggleSubLeader(member.id)}
+                onTransferHost={() => onTransferHost(member.id)}
+              />
             );
           })}
         </div>
@@ -833,12 +1045,17 @@ function ActiveRoomWorkspace({
   roomId,
   setRoomId,
   onLeaveRoom,
+  onKicked,
 }: {
   roomId: string;
   setRoomId: (roomId: string) => void;
   onLeaveRoom: () => void;
+  onKicked: () => void;
 }) {
   const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"code" | "whiteboard">("code");
+  const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
+  const [hasUnreadChat, setHasUnreadChat] = useState(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -872,7 +1089,49 @@ function ActiveRoomWorkspace({
     requestJoin,
     acceptJoinRequest,
     declineJoinRequest,
+    subLeaderIds,
+    mutedIds,
+    wasKicked,
+    isMuted,
+    kickUser,
+    muteUser,
+    unmuteUser,
+    setSubLeader,
+    transferHost,
+    reactions,
+    sendReaction,
   } = useYjsCollaboration(roomId);
+
+  // If local user was kicked, invoke kick handler immediately
+  useEffect(() => {
+    if (wasKicked) {
+      onKicked();
+    }
+  }, [wasKicked, onKicked]);
+
+  // Track unread chat when chat drawer is closed
+  useEffect(() => {
+    if (!ydoc) return;
+    const chatArray = ydoc.getArray<ChatMessage>("chat-messages");
+    let initialLength = chatArray.length;
+
+    const onChatUpdate = () => {
+      if (!chatDrawerOpen && chatArray.length > initialLength) {
+        setHasUnreadChat(true);
+      }
+      initialLength = chatArray.length;
+    };
+
+    chatArray.observe(onChatUpdate);
+    return () => {
+      chatArray.unobserve(onChatUpdate);
+    };
+  }, [ydoc, chatDrawerOpen]);
+
+  const handleOpenChat = useCallback(() => {
+    setChatDrawerOpen(true);
+    setHasUnreadChat(false);
+  }, []);
 
   const workspaceRef = useRef<HTMLDivElement>(null);
 
@@ -1019,36 +1278,62 @@ function ActiveRoomWorkspace({
         activeUsers={activeUsers}
         localUser={localUser}
         hostId={hostId}
+        subLeaderIds={subLeaderIds}
+        mutedIds={mutedIds}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
         onOpenGitHub={() => setGithubModalOpen(true)}
         onLeaveRoom={onLeaveRoom}
         onUpdateUser={updateUserProfile}
+        onOpenChat={handleOpenChat}
+        unreadChat={hasUnreadChat}
+        onKickUser={kickUser}
+        onToggleMute={(id) => {
+          if (mutedIds.includes(id)) unmuteUser(id);
+          else muteUser(id);
+        }}
+        onToggleSubLeader={(id) => {
+          setSubLeader(id, !subLeaderIds.includes(id));
+        }}
+        onTransferHost={transferHost}
       />
 
-      <div className="workspace-body relative">
-        <FileExplorer
-          fileNames={fileNames}
-          activeFileName={activeFileName}
-          onSelectFile={setActiveFileName}
-          onCreateFile={createFile}
-          onRenameFile={renameFile}
-          onDeleteFile={deleteFile}
-          onImportFolder={handleImportFolder}
-          onImportFiles={handleImportFiles}
-          onOpenGitHub={() => setGithubModalOpen(true)}
-        />
-        <EditorPane
-          fileName={activeFileName}
-          yText={activeYText}
-          wsProvider={wsProvider}
-          undoManager={activeUndoManager}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onUndo={undo}
-          onRedo={redo}
-          onOpenFolderPicker={() => folderInputRef.current?.click()}
-          onOpenGitHub={() => setGithubModalOpen(true)}
-        />
-      </div>
+      {viewMode === "code" ? (
+        <div className="workspace-body relative">
+          <FileExplorer
+            fileNames={fileNames}
+            activeFileName={activeFileName}
+            onSelectFile={setActiveFileName}
+            onCreateFile={createFile}
+            onRenameFile={renameFile}
+            onDeleteFile={deleteFile}
+            onImportFolder={handleImportFolder}
+            onImportFiles={handleImportFiles}
+            onOpenGitHub={() => setGithubModalOpen(true)}
+          />
+          <EditorPane
+            fileName={activeFileName}
+            yText={activeYText}
+            wsProvider={wsProvider}
+            undoManager={activeUndoManager}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={undo}
+            onRedo={redo}
+            onOpenFolderPicker={() => folderInputRef.current?.click()}
+            onOpenGitHub={() => setGithubModalOpen(true)}
+          />
+        </div>
+      ) : (
+        <div className="workspace-body relative w-full h-full flex flex-col">
+          <MultiplayerWhiteboard
+            ydoc={ydoc}
+            authorId={localUser.id}
+            defaultColor={localUser.color}
+            isMuted={isMuted}
+          />
+        </div>
+      )}
 
       {/* Color-only live mouse pointers overlay (NO text label attached) */}
       <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden" aria-hidden="true">
@@ -1087,8 +1372,25 @@ function ActiveRoomWorkspace({
           })}
       </div>
 
+      {/* Live Floating Emoji Reactions */}
+      <FloatingReactions
+        reactions={reactions}
+        onSendReaction={sendReaction}
+        disabled={isMuted}
+      />
+
+      {/* Public & Private Chat Drawer */}
+      <ChatDrawer
+        open={chatDrawerOpen}
+        onOpenChange={setChatDrawerOpen}
+        ydoc={ydoc}
+        localUser={localUser}
+        activeUsers={activeUsers}
+        isMuted={isMuted}
+      />
+
       <StatusBar
-        fileName={activeFileName}
+        fileName={viewMode === "whiteboard" ? "Multiplayer Whiteboard Canvas" : activeFileName}
         isOffline={isOffline}
         onClear={clearLocalCache}
       />
@@ -1132,6 +1434,7 @@ export function EditorWorkspace() {
     }
     return null;
   });
+  const [kickedNotice, setKickedNotice] = useState<string | null>(null);
 
   // Sync room ID changes back to browser URL
   useEffect(() => {
@@ -1155,7 +1458,9 @@ export function EditorWorkspace() {
   if (!roomId) {
     return (
       <LobbyScreen
+        kickedNotice={kickedNotice}
         onEnterRoom={(code) => {
+          setKickedNotice(null);
           setRoomId(code);
         }}
       />
@@ -1167,6 +1472,10 @@ export function EditorWorkspace() {
       roomId={roomId}
       setRoomId={setRoomId}
       onLeaveRoom={() => setRoomId(null)}
+      onKicked={() => {
+        setKickedNotice("You were removed by the host.");
+        setRoomId(null);
+      }}
     />
   );
 }

@@ -23,9 +23,10 @@ import {
 
 interface LobbyScreenProps {
   onEnterRoom: (roomId: string, isCreator: boolean) => void;
+  kickedNotice?: string | null;
 }
 
-export function LobbyScreen({ onEnterRoom }: LobbyScreenProps) {
+export function LobbyScreen({ onEnterRoom, kickedNotice }: LobbyScreenProps) {
   const [localUser, setLocalUser] = useState<RemoteUser>(getOrCreateLocalUser);
   const [userName, setUserName] = useState(localUser.name);
   const [joinCode, setJoinCode] = useState("");
@@ -122,6 +123,13 @@ export function LobbyScreen({ onEnterRoom }: LobbyScreenProps) {
             Realtime collaborative code arena powered by Yjs CRDTs. Launch a new server or join an active room.
           </p>
         </div>
+
+        {kickedNotice && (
+          <div className="w-full max-w-md p-3 rounded-xl bg-destructive/15 border border-destructive/40 text-destructive text-xs font-semibold text-center flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-2">
+            <ShieldCheck className="size-4 shrink-0" />
+            <span>{kickedNotice}</span>
+          </div>
+        )}
 
         {/* Player Profile Setup Pill Card */}
         <div className="w-full max-w-md bg-card/85 backdrop-blur-md border border-border rounded-2xl p-4 shadow-xl space-y-3">

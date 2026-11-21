@@ -17,6 +17,22 @@ export interface RemoteUser {
   mouse?: MousePosition | null;
 }
 
+export interface EmojiReaction {
+  id: string;
+  emoji: string;
+  senderName: string;
+  senderColor: string;
+  xPercent: number;
+  timestamp: number;
+}
+
+export interface RoomRoles {
+  hostId: string | null;
+  subLeaderIds: string[];
+  mutedIds: string[];
+  kickedIds: string[];
+}
+
 export interface JoinRequest {
   id: string;
   name: string;
@@ -135,6 +151,11 @@ export function useYjsCollaboration(roomId: string) {
   );
 
   const [hostId, setHostId] = useState<string | null>(() => isCreatorInitial ? getOrCreateLocalUser().id : null);
+  const [subLeaderIds, setSubLeaderIds] = useState<string[]>([]);
+  const [mutedIds, setMutedIds] = useState<string[]>([]);
+  const [kickedIds, setKickedIds] = useState<string[]>([]);
+  const [wasKicked, setWasKicked] = useState(false);
+  const [reactions, setReactions] = useState<EmojiReaction[]>([]);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
   const [approvedUsers, setApprovedUsers] = useState<Record<string, ApprovedUser>>(() => {
     if (isCreatorInitial) {
@@ -186,6 +207,7 @@ export function useYjsCollaboration(roomId: string) {
     const roomMeta = ydoc.getMap<string>("roomMeta");
     const joinRequestsMap = ydoc.getMap<JoinRequest>("joinRequests");
     const approvedUsersMap = ydoc.getMap<ApprovedUser>("approvedUsers");
+    const roomRolesMap = ydoc.getMap<any>("room-roles");
 
     const isCreatorSession = typeof window !== "undefined" && (
       sessionStorage.getItem(`syncforge_creator_${roomId}`) === "true" ||
@@ -198,6 +220,12 @@ export function useYjsCollaboration(roomId: string) {
         if (!roomMeta.get("hostId")) {
           roomMeta.set("hostId", currentUser.id);
           roomMeta.set("hostName", currentUser.name);
+        }
+        if (!roomRolesMap.get("hostId")) {
+          roomRolesMap.set("hostId", currentUser.id);
+          roomRolesMap.set("subLeaderIds", []);
+          roomRolesMap.set("mutedIds", []);
+          roomRolesMap.set("kickedIds", []);
         }
         approvedUsersMap.set(currentUser.id, {
           id: currentUser.id,
@@ -230,6 +258,8 @@ export function useYjsCollaboration(roomId: string) {
     const updateActiveUsers = () => {
       const states = wsProvider.awareness.getStates();
       const users: RemoteUser[] = [];
+      const incomingReactions: EmojiReaction[] = [];
+
       states.forEach((state: Record<string, any>) => {
         const u = state["user"];
         if (u && u["id"] && u["name"]) {
@@ -241,9 +271,48 @@ export function useYjsCollaboration(roomId: string) {
             mouse: state["mouse"] !== undefined ? state["mouse"] : (u["mouse"] || null),
           });
         }
+        const r = state["reaction"];
+        if (r && r["id"] && r["emoji"] && r["timestamp"] && Date.now() - r["timestamp"] < 3500) {
+          incomingReactions.push({
+            id: r["id"],
+            emoji: r["emoji"],
+            senderName: r["senderName"] || (u ? u["name"] : "Anonymous"),
+            senderColor: r["senderColor"] || (u ? u["color"] : "#38bdf8"),
+            xPercent: r["xPercent"] || 50,
+            timestamp: r["timestamp"],
+          });
+        }
       });
+
+      if (incomingReactions.length > 0) {
+        setReactions((prev) => {
+          const map = new Map<string, EmojiReaction>();
+          prev.forEach((item) => {
+            if (Date.now() - item.timestamp < 3500) map.set(item.id, item);
+          });
+          incomingReactions.forEach((item) => map.set(item.id, item));
+          return Array.from(map.values());
+        });
+      }
+
       const unique = Array.from(new Map(users.map((u) => [u.id, u])).values());
       setActiveUsers(unique);
+
+      // Auto-assign host if no host currently exists or previous host left
+      const currentHost = roomRolesMap.get("hostId") || roomMeta.get("hostId");
+      if (!currentHost || !unique.some((u) => u.id === currentHost)) {
+        if (unique.length > 0) {
+          const firstUser = unique[0];
+          if (firstUser && firstUser.id === currentUser.id) {
+            ydoc.transact(() => {
+              roomRolesMap.set("hostId", currentUser.id);
+              roomMeta.set("hostId", currentUser.id);
+              roomMeta.set("hostName", currentUser.name);
+            });
+            setHostId(currentUser.id);
+          }
+        }
+      }
 
       // Subtle join/leave notifications
       const prevMap = prevUsersRef.current;
@@ -270,8 +339,25 @@ export function useYjsCollaboration(roomId: string) {
     };
 
     const updateRoomMeta = () => {
-      const host = roomMeta.get("hostId") ?? (isCreatorSession ? currentUser.id : null);
+      const host = (roomRolesMap.get("hostId") as string) || (roomMeta.get("hostId") as string) || (isCreatorSession ? currentUser.id : null);
       setHostId(host);
+    };
+
+    const updateRoomRoles = () => {
+      const host = (roomRolesMap.get("hostId") as string) || (roomMeta.get("hostId") as string) || null;
+      const subLeaders = (roomRolesMap.get("subLeaderIds") as string[]) || [];
+      const muted = (roomRolesMap.get("mutedIds") as string[]) || [];
+      const kicked = (roomRolesMap.get("kickedIds") as string[]) || [];
+
+      setHostId(host);
+      setSubLeaderIds(Array.isArray(subLeaders) ? subLeaders : []);
+      setMutedIds(Array.isArray(muted) ? muted : []);
+      setKickedIds(Array.isArray(kicked) ? kicked : []);
+
+      if (Array.isArray(kicked) && kicked.includes(currentUser.id)) {
+        setWasKicked(true);
+        wsProvider.disconnect();
+      }
     };
 
     const updateJoinRequests = () => {
@@ -300,9 +386,15 @@ export function useYjsCollaboration(roomId: string) {
     // Observers
     filesMap.observe(updateFilesList);
     roomMeta.observe(updateRoomMeta);
+    roomRolesMap.observe(updateRoomRoles);
     joinRequestsMap.observe(updateJoinRequests);
     approvedUsersMap.observe(updateApprovedUsers);
     wsProvider.awareness.on("change", updateActiveUsers);
+
+    // Clean up expired floating reactions periodically
+    const reactionCleanupInterval = window.setInterval(() => {
+      setReactions((prev) => prev.filter((r) => Date.now() - r.timestamp < 3500));
+    }, 1000);
 
     // Seed files ONLY after remote sync completes (or offline fallback)
     const checkAndSeed = () => {
@@ -317,11 +409,17 @@ export function useYjsCollaboration(roomId: string) {
         updateFilesList();
       }
 
-      if (isCreatorSession || !roomMeta.get("hostId")) {
+      if (isCreatorSession || !roomMeta.get("hostId") || !roomRolesMap.get("hostId")) {
         ydoc.transact(() => {
           if (!roomMeta.get("hostId")) {
             roomMeta.set("hostId", currentUser.id);
             roomMeta.set("hostName", currentUser.name);
+          }
+          if (!roomRolesMap.get("hostId")) {
+            roomRolesMap.set("hostId", currentUser.id);
+            roomRolesMap.set("subLeaderIds", []);
+            roomRolesMap.set("mutedIds", []);
+            roomRolesMap.set("kickedIds", []);
           }
           approvedUsersMap.set(currentUser.id, {
             id: currentUser.id,
@@ -338,6 +436,7 @@ export function useYjsCollaboration(roomId: string) {
     persistence.whenSynced.then(() => {
       updateFilesList();
       updateRoomMeta();
+      updateRoomRoles();
       updateJoinRequests();
       updateApprovedUsers();
     });
@@ -350,6 +449,7 @@ export function useYjsCollaboration(roomId: string) {
         checkAndSeed();
         updateFilesList();
         updateRoomMeta();
+        updateRoomRoles();
         updateJoinRequests();
         updateApprovedUsers();
       }
@@ -370,12 +470,14 @@ export function useYjsCollaboration(roomId: string) {
     wsProvider.on("status", onStatus);
 
     return () => {
+      window.clearInterval(reactionCleanupInterval);
       window.clearTimeout(offlineFallbackTimer);
       wsProvider.off("sync", onWsSync);
       wsProvider.off("status", onStatus);
       wsProvider.awareness.off("change", updateActiveUsers);
       filesMap.unobserve(updateFilesList);
       roomMeta.unobserve(updateRoomMeta);
+      roomRolesMap.unobserve(updateRoomRoles);
       joinRequestsMap.unobserve(updateJoinRequests);
       approvedUsersMap.unobserve(updateApprovedUsers);
 
@@ -619,6 +721,80 @@ export function useYjsCollaboration(roomId: string) {
     joinRequestsMap.delete(userId);
   }, []);
 
+  const sendReaction = useCallback((emoji: string) => {
+    if (!wsProviderRef.current) return;
+    const reaction: EmojiReaction = {
+      id: `rx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      emoji,
+      senderName: localUser.name,
+      senderColor: localUser.color,
+      xPercent: Math.floor(20 + Math.random() * 60),
+      timestamp: Date.now(),
+    };
+    wsProviderRef.current.awareness.setLocalStateField("reaction", reaction);
+  }, [localUser]);
+
+  const kickUser = useCallback((targetUserId: string) => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const currentKicked = (roomRolesMap.get("kickedIds") as string[]) || [];
+    if (!currentKicked.includes(targetUserId)) {
+      ydocRef.current.transact(() => {
+        roomRolesMap.set("kickedIds", [...currentKicked, targetUserId]);
+      });
+    }
+  }, []);
+
+  const muteUser = useCallback((targetUserId: string) => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const currentMuted = (roomRolesMap.get("mutedIds") as string[]) || [];
+    if (!currentMuted.includes(targetUserId)) {
+      ydocRef.current.transact(() => {
+        roomRolesMap.set("mutedIds", [...currentMuted, targetUserId]);
+      });
+    }
+  }, []);
+
+  const unmuteUser = useCallback((targetUserId: string) => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const currentMuted = (roomRolesMap.get("mutedIds") as string[]) || [];
+    ydocRef.current.transact(() => {
+      roomRolesMap.set("mutedIds", currentMuted.filter((id) => id !== targetUserId));
+    });
+  }, []);
+
+  const setSubLeader = useCallback((targetUserId: string, isSubLeader: boolean) => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const currentSubLeaders = (roomRolesMap.get("subLeaderIds") as string[]) || [];
+    ydocRef.current.transact(() => {
+      if (isSubLeader) {
+        if (!currentSubLeaders.includes(targetUserId)) {
+          roomRolesMap.set("subLeaderIds", [...currentSubLeaders, targetUserId]);
+        }
+      } else {
+        roomRolesMap.set("subLeaderIds", currentSubLeaders.filter((id) => id !== targetUserId));
+      }
+    });
+  }, []);
+
+  const transferHost = useCallback((targetUserId: string) => {
+    if (!ydocRef.current) return;
+    const roomRolesMap = ydocRef.current.getMap<any>("room-roles");
+    const roomMeta = ydocRef.current.getMap<string>("roomMeta");
+    ydocRef.current.transact(() => {
+      roomRolesMap.set("hostId", targetUserId);
+      roomMeta.set("hostId", targetUserId);
+      const currentSubLeaders = (roomRolesMap.get("subLeaderIds") as string[]) || [];
+      roomRolesMap.set("subLeaderIds", currentSubLeaders.filter((id) => id !== targetUserId));
+    });
+  }, []);
+
+  const isSubLeader = subLeaderIds.includes(localUser.id);
+  const isMuted = mutedIds.includes(localUser.id);
+
   return {
     localUser,
     activeUsers,
@@ -652,5 +828,20 @@ export function useYjsCollaboration(roomId: string) {
     requestJoin,
     acceptJoinRequest,
     declineJoinRequest,
+    // Moderation & Roles
+    subLeaderIds,
+    mutedIds,
+    kickedIds,
+    wasKicked,
+    isSubLeader,
+    isMuted,
+    kickUser,
+    muteUser,
+    unmuteUser,
+    setSubLeader,
+    transferHost,
+    // Reactions
+    reactions,
+    sendReaction,
   };
 }
