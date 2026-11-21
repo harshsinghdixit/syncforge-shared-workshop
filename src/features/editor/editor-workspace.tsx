@@ -19,8 +19,6 @@ import {
   Share2,
   Trash2,
   Undo2,
-  Wifi,
-  WifiOff,
   X,
 } from "lucide-react";
 
@@ -204,27 +202,13 @@ function TopBar({
           <span>GitHub</span>
         </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
+        <div
           className={`connection-badge ${isOffline ? "connection-offline" : "connection-online"}`}
-          onClick={toggleOffline}
           aria-label={isOffline ? "Connection offline" : "Connection online"}
         >
           <span className="connection-dot" />
           <span>{isOffline ? "Offline" : "Online"}</span>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          className="simulate-button"
-          onClick={toggleOffline}
-          title={isOffline ? "Restore online status" : "Simulate offline status"}
-        >
-          {isOffline ? <Wifi className="size-4" /> : <WifiOff className="size-4" />}
-          <span className="simulate-label">{isOffline ? "Reconnect" : "Simulate offline"}</span>
-        </Button>
+        </div>
 
         {/* Colored Player Avatar Pills with Host Badge */}
         <div className="flex items-center gap-1.5 flex-wrap" aria-label={`${activeUsers.length} active users`}>

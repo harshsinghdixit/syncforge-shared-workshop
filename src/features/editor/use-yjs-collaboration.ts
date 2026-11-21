@@ -37,6 +37,7 @@ const ADJECTIVES = ["Swift", "Cosmic", "Neon", "Silent", "Quantum", "Hyper", "So
 const NOUNS = ["Coder", "Forge", "Hacker", "Pioneer", "Voyager", "Architect", "Dev", "Spark"];
 
 function persistLocalUser(user: RemoteUser) {
+  if (typeof window === "undefined") return;
   window.localStorage.setItem("syncforge_user_id", user.id);
   window.localStorage.setItem("syncforge_user_name", user.name);
   window.localStorage.setItem("syncforge_user_color", user.color);
@@ -44,6 +45,15 @@ function persistLocalUser(user: RemoteUser) {
 }
 
 export function getOrCreateLocalUser(): RemoteUser {
+  if (typeof window === "undefined") {
+    return {
+      id: "user-server",
+      name: "Swift Dev",
+      color: USER_COLORS[0].color,
+      colorLight: USER_COLORS[0].colorLight,
+    };
+  }
+
   const storedId =
     window.localStorage.getItem("syncforge_user_id") ??
     window.sessionStorage.getItem("syncforge_user_id");

@@ -269,9 +269,19 @@
   font-size: 11px;
 }
 .room-presence { justify-self: end; gap: 8px; white-space: nowrap; }
-.connection-badge { height: 28px; gap: 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-.connection-online { background: color-mix(in oklch, var(--color-online) 12%, transparent); color: var(--color-online); }
-.connection-offline { background: color-mix(in oklch, var(--color-offline) 13%, transparent); color: var(--color-offline); }
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  gap: 6px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  user-select: none;
+}
+.connection-online { background: color-mix(in oklch, var(--color-online) 12%, transparent); color: var(--color-online); border: 1px solid color-mix(in oklch, var(--color-online) 25%, transparent); }
+.connection-offline { background: color-mix(in oklch, var(--color-offline) 13%, transparent); color: var(--color-offline); border: 1px solid color-mix(in oklch, var(--color-offline) 25%, transparent); }
 .connection-dot, .status-dot, .workspace-status-dot {
   width: 7px;
   height: 7px;
@@ -279,8 +289,6 @@
   border-radius: 50%;
   background: currentColor;
 }
-.simulate-button { height: 30px; color: var(--color-muted-foreground); font-size: 11px; }
-.simulate-button svg { width: 14px; height: 14px; }
 .member-stack { display: flex; align-items: center; padding-left: 4px; }
 .member-avatar, .member-count {
   display: grid;
@@ -467,7 +475,6 @@
   .room-presence { grid-column: 2; grid-row: 1; }
   .room-tools { grid-column: 1 / -1; grid-row: 2; justify-content: center; }
   .explorer { width: 190px; flex-basis: 190px; }
-  .simulate-label { display: none; }
 }
 
 @media (max-width: 560px) {
