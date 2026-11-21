@@ -7,8 +7,10 @@ import {
   Sparkles,
   VolumeX,
   SlidersHorizontal,
+  Loader2,
 } from "lucide-react";
 import { TestMediaPopover } from "./test-media-popover";
+import { isSegmenterLoading } from "./bg-remover";
 
 interface MediaControlsDockProps {
   isMicOn: boolean;
@@ -140,7 +142,7 @@ export function MediaControlsDock({
 
         <div className="h-4 w-px bg-border/80 mx-0.5" />
 
-        {/* Clean Background Toggle (Local Only) */}
+        {/* Remove Background Toggle (OBS-Style Transparent Cutout, Local Only) */}
         <button
           type="button"
           onClick={onToggleCleanBg}
@@ -149,10 +151,16 @@ export function MediaControlsDock({
               ? "bg-sky-500/20 text-sky-400 border border-sky-500/40 shadow-xs"
               : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
           }`}
-          title="Clean BG (Local): Toggles portrait framing and vignette mask locally without lag"
+          title="Remove BG (Local): OBS-style transparent cutout without border or background clipping"
         >
-          <Sparkles className="size-3.5" />
-          <span className="hidden sm:inline">Clean BG</span>
+          {cleanBg && isSegmenterLoading() ? (
+            <Loader2 className="size-3.5 animate-spin text-sky-400" />
+          ) : (
+            <Sparkles className="size-3.5" />
+          )}
+          <span className="hidden sm:inline">
+            {cleanBg && isSegmenterLoading() ? "Loading AI..." : "Remove BG"}
+          </span>
         </button>
 
         {/* Test Mic & Cam Button */}

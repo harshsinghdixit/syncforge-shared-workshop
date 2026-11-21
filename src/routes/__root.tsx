@@ -81,10 +81,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "SyncForge — Collaborative Code Editor" },
+      { title: "Same Code — Collaborative Code Editor" },
       { name: "description", content: "A focused shared coding room with a local-first editor and file workspace." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "SyncForge — Collaborative Code Editor" },
+      { property: "og:title", content: "Same Code — Collaborative Code Editor" },
       { property: "og:description", content: "A focused shared coding room with a local-first editor and file workspace." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

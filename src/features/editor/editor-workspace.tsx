@@ -477,12 +477,9 @@ function TopBar({
 
   return (
     <header className="topbar">
-      <div className="brand-lockup">
-        <div className="brand-mark cursor-pointer" aria-hidden="true" onClick={onLeaveRoom} title="Return to Game Lobby">
-          <Layers3 className="size-5" strokeWidth={2.4} />
-        </div>
-        <span className="brand-name cursor-pointer" onClick={onLeaveRoom} title="Return to Game Lobby">
-          SyncForge
+      <div className="brand-lockup flex items-center gap-2">
+        <span className="brand-name cursor-pointer font-extrabold text-sm sm:text-base tracking-tight text-foreground" onClick={onLeaveRoom} title="Return to Lobby">
+          Same Code
         </span>
         <Button
           variant="ghost"
@@ -919,7 +916,7 @@ function EditorPane({
     <section className="editor-pane" aria-label="Code editor">
       <div className="editor-toolbar">
         <div className="editor-location">
-          <span className="crumb-muted">SyncForge</span>
+          <span className="crumb-muted">Same Code</span>
           <span className="crumb-divider">/</span>
           <span className="crumb-file">{fileName || "No file selected"}</span>
           <span className="language-chip">{fileLanguage}</span>

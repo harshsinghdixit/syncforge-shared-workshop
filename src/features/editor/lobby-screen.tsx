@@ -108,12 +108,9 @@ export function LobbyScreen({ onEnterRoom, kickedNotice }: LobbyScreenProps) {
       <main className="w-full max-w-3xl flex flex-col items-center z-10 space-y-6 sm:space-y-8 animate-in fade-in duration-500 py-6 sm:py-8">
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center space-y-3">
-          <div className="flex items-center gap-3">
-            <div className="size-12 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center text-primary shadow-lg shadow-primary/10">
-              <Layers3 className="size-6" strokeWidth={2.4} />
-            </div>
+          <div className="flex items-center gap-2.5">
             <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-foreground flex items-center gap-2.5">
-              SyncForge
+              Same Code
               <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30 tracking-wider">
                 MULTIPLAYER IDE
               </span>

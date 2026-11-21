@@ -39,7 +39,7 @@ const starterFiles: EditorFile[] = [
   {
     id: "readme-md",
     name: "README.md",
-    content: `# SyncForge\n\nA little room for great ideas.\n\n## Getting started\n\n1. Open a file from the explorer.\n2. Make a change and invite your team.\n3. Build something together.\n\n> Good code is a team sport.\n`,
+    content: `# Same Code\n\nA little room for great ideas.\n\n## Getting started\n\n1. Open a file from the explorer.\n2. Make a change and invite your team.\n3. Build something together.\n\n> Good code is a team sport.\n`,
   },
 ];
 

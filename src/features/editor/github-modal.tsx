@@ -26,7 +26,7 @@ export function GitHubModal({
   const [repo, setRepo] = useState(() => window.sessionStorage.getItem("syncforge_github_repo") || "");
   const [branch, setBranch] = useState(() => window.sessionStorage.getItem("syncforge_github_branch") || "main");
   const [token, setToken] = useState(() => window.sessionStorage.getItem("syncforge_github_token") || "");
-  const [commitMessage, setCommitMessage] = useState("Update from SyncForge");
+  const [commitMessage, setCommitMessage] = useState("Update from Same Code");
   const [loadingAction, setLoadingAction] = useState<"pull" | "push" | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -189,7 +189,7 @@ export function GitHubModal({
             method: "PUT",
             headers,
             body: JSON.stringify({
-              message: commitMessage.trim() || "Update from SyncForge",
+              message: commitMessage.trim() || "Update from Same Code",
               content: encoded,
               branch: trimmedBranch,
               ...(sha ? { sha } : {}),
@@ -271,7 +271,7 @@ export function GitHubModal({
             <Input
               value={commitMessage}
               onChange={(e) => setCommitMessage(e.target.value)}
-              placeholder="Update from SyncForge"
+              placeholder="Update from Same Code"
               className="bg-background/50 text-xs"
             />
           </div>

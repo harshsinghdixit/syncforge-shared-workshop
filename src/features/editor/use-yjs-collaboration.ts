@@ -133,7 +133,7 @@ export function getOrCreateLocalUser(): RemoteUser {
 export const STARTER_FILES: Record<string, string> = {
   "main.js": `import { greet } from "./utils.js";\n\nconst room = "syncforge";\n\nfunction startSession() {\n  const message = greet("world");\n  console.log(\`\${message} — connected to \${room}\`);\n}\n\nstartSession();\n`,
   "utils.py": `from datetime import datetime\n\ndef greet(name: str) -> str:\n    """Return a friendly message with the current time."""\n    current_time = datetime.now().strftime("%H:%M")\n    return f"Hello, {name}! It is {current_time}."\n\n\nif __name__ == "__main__":\n    print(greet("world"))\n`,
-  "README.md": `# SyncForge\n\nA little room for great ideas.\n\n## Getting started\n\n1. Open a file from the explorer.\n2. Make a change and invite your team.\n3. Build something together.\n\n> Good code is a team sport.\n`,
+  "README.md": `# Same Code\n\nA little room for great ideas.\n\n## Getting started\n\n1. Open a file from the explorer.\n2. Make a change and invite your team.\n3. Build something together.\n\n> Good code is a team sport.\n`,
 };
 
 export function useYjsCollaboration(roomId: string) {
